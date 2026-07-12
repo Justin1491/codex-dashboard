@@ -109,7 +109,8 @@ assert_equal '1' "$(jq '.projects | length' "$(config_path)")" 'stores project'
 assert_equal 'project-one' "$(jq -r '.defaultProjectId' "$(config_path)")" 'sets first project as default'
 assert_failure 'rejects duplicate project' project_add "$config_tmp/Project One" 'Project One'
 export CODEX_DASHBOARD_FOLDER_PICKER_RESULT="$config_tmp/Project Two"
-assert_equal "$config_tmp/Project Two" "$(project_select_folder)" 'folder picker returns selected project'
+expected_picker_path="$(cd "$config_tmp/Project Two" && pwd -P)"
+assert_equal "$expected_picker_path" "$(project_select_folder)" 'folder picker returns selected project'
 unset CODEX_DASHBOARD_FOLDER_PICKER_RESULT
 assert_success 'removes project' project_remove 'project-one'
 assert_equal '0' "$(jq '.projects | length' "$(config_path)")" 'removes project from config'
