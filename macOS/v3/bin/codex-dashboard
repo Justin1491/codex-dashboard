@@ -94,8 +94,29 @@ command_project() {
   esac
 }
 
+DASHBOARD_SCREEN_ACTIVE=false
+
+# Restore terminal state exactly once. This function is safe to call from both
+# signal handlers and the EXIT trap.
 dashboard_cleanup() {
-  display_leave
+  if [[ "$DASHBOARD_SCREEN_ACTIVE" == 'true' ]]; then
+    display_leave
+    DASHBOARD_SCREEN_ACTIVE=false
+  fi
+}
+
+# Signal traps must terminate explicitly. Returning from an INT/TERM trap would
+# restore the terminal but allow the infinite dashboard loop to continue.
+dashboard_handle_interrupt() {
+  trap - INT TERM
+  dashboard_cleanup
+  exit 130
+}
+
+dashboard_handle_terminate() {
+  trap - INT TERM
+  dashboard_cleanup
+  exit 143
 }
 
 command_dashboard() {
@@ -138,8 +159,12 @@ command_dashboard() {
   last_refresh="$(date +%s)"
   api_status="Connected; refresh every ${refresh_seconds}s"
 
-  trap dashboard_cleanup EXIT INT TERM
+  trap dashboard_cleanup EXIT
+  trap dashboard_handle_interrupt INT
+  trap dashboard_handle_terminate TERM
+
   display_enter
+  DASHBOARD_SCREEN_ACTIVE=true
   display_render_full "$NORMALIZED_STATE" "$automation_status" "$api_status"
 
   while true; do
