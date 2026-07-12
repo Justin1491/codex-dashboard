@@ -13,12 +13,12 @@ setup_resume_mode_description() {
 setup_select_resume_mode() {
   local choice
 
-  printf '\nHow should Codex Dashboard handle a cleared rate limit?\n\n'
-  printf '  1. Off       - %s\n' "$(setup_resume_mode_description off)"
-  printf '  2. Notify    - %s\n' "$(setup_resume_mode_description notify)"
-  printf '  3. Confirm   - %s\n' "$(setup_resume_mode_description confirm)"
-  printf '  4. Automatic - %s\n' "$(setup_resume_mode_description automatic)"
-  printf '\nChoose 1-4 [3]: '
+  printf '\nHow should Codex Dashboard handle a cleared rate limit?\n\n' >&2
+  printf '  1. Off       - %s\n' "$(setup_resume_mode_description off)" >&2
+  printf '  2. Notify    - %s\n' "$(setup_resume_mode_description notify)" >&2
+  printf '  3. Confirm   - %s\n' "$(setup_resume_mode_description confirm)" >&2
+  printf '  4. Automatic - %s\n' "$(setup_resume_mode_description automatic)" >&2
+  printf '\nChoose 1-4 [3]: ' >&2
   read -r choice
 
   case "${choice:-3}" in
