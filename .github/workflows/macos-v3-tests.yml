@@ -22,4 +22,4 @@ jobs:
       - name: Run ShellCheck
         run: shellcheck macOS/v3/bin/codex-dashboard macOS/v3/lib/*.sh macOS/v3/*.sh macOS/v3/tests/*.sh
       - name: Run tests
-        run: macOS/v3/tests/run-tests.sh
+        run: bash macOS/v3/tests/run-tests.sh
