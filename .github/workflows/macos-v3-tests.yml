@@ -1,0 +1,25 @@
+name: macOS V3 Tests
+
+on:
+  push:
+    branches: [v3-development]
+    paths:
+      - 'macOS/v3/**'
+      - '.github/workflows/macos-v3-tests.yml'
+  pull_request:
+    paths:
+      - 'macOS/v3/**'
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install jq shellcheck
+      - name: Validate shell syntax
+        run: find macOS/v3 -type f \( -name '*.sh' -o -path 'macOS/v3/bin/codex-dashboard' \) -print0 | xargs -0 -n1 bash -n
+      - name: Run ShellCheck
+        run: shellcheck macOS/v3/bin/codex-dashboard macOS/v3/lib/*.sh macOS/v3/*.sh macOS/v3/tests/*.sh
+      - name: Run tests
+        run: macOS/v3/tests/run-tests.sh
