@@ -4,6 +4,7 @@ set -uo pipefail
 TEST_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$TEST_DIR/.." && pwd -P)"
 FIXTURES="$TEST_DIR/fixtures"
+COMMAND_FILE="$ROOT/bin/codex-dashboard"
 
 source "$ROOT/lib/auth.sh"
 source "$ROOT/lib/model.sh"
@@ -47,6 +48,17 @@ assert_failure() {
     TESTS_FAILED=$((TESTS_FAILED + 1))
   else
     printf 'PASS: %s\n' "$message"
+  fi
+}
+
+assert_file_contains() {
+  local file="$1" pattern="$2" message="$3"
+  TESTS_RUN=$((TESTS_RUN + 1))
+  if grep -Fq -- "$pattern" "$file"; then
+    printf 'PASS: %s\n' "$message"
+  else
+    printf 'FAIL: %s\n  missing pattern: %s\n' "$message" "$pattern" >&2
+    TESTS_FAILED=$((TESTS_FAILED + 1))
   fi
 }
 
@@ -98,6 +110,13 @@ assert_success 'accepts existing project path' resume_safety_check "$config_tmp"
 resume_mark_event_handled 'five-hour-1234'
 assert_success 'recognizes handled reset event' resume_event_was_handled 'five-hour-1234'
 rm -rf "$config_tmp"
+
+printf '\n== Dashboard exit handling ==\n'
+assert_file_contains "$COMMAND_FILE" 'trap dashboard_cleanup EXIT' 'registers cleanup for normal exit'
+assert_file_contains "$COMMAND_FILE" 'trap dashboard_handle_interrupt INT' 'registers terminating interrupt handler'
+assert_file_contains "$COMMAND_FILE" 'trap dashboard_handle_terminate TERM' 'registers terminating terminate handler'
+assert_file_contains "$COMMAND_FILE" 'exit 130' 'interrupt handler exits the process'
+assert_file_contains "$COMMAND_FILE" 'exit 143' 'terminate handler exits the process'
 
 printf '\n%d tests, %d failures\n' "$TESTS_RUN" "$TESTS_FAILED"
 ((TESTS_FAILED == 0))
