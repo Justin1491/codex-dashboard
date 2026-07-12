@@ -11,7 +11,7 @@ param(
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = 'Stop'
 
-$Script:Version = '2.2.0'
+$Script:AppVersion = '2.2.0'
 $Script:UsageEndpoint = if ($env:CODEX_USAGE_ENDPOINT) { $env:CODEX_USAGE_ENDPOINT } else { 'https://chatgpt.com/backend-api/wham/usage' }
 $Script:CreditsEndpoint = if ($env:CODEX_CREDITS_ENDPOINT) { $env:CODEX_CREDITS_ENDPOINT } else { 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits' }
 $Script:CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
@@ -29,7 +29,7 @@ $Script:OriginalCursorVisible = $true
 
 function Show-Usage {
 @"
-Codex Usage Dashboard v$($Script:Version) for Windows
+Codex Usage Dashboard v$($Script:AppVersion) for Windows
 
 Usage:
   .\CodexDashboard.ps1 [options]
@@ -51,7 +51,7 @@ Examples:
 }
 
 if ($Help) { Show-Usage; exit 0 }
-if ($Version) { $Script:Version; exit 0 }
+if ($Version) { $Script:AppVersion; exit 0 }
 
 function Get-ObjectPropertyValue {
     param([object]$Object, [string[]]$Names, $Default = $null)
@@ -228,7 +228,7 @@ function Render-Dashboard {
     $canvas = [math]::Min(160,$size.Width - 4)
     $pad = ' ' * [math]::Max(0,[int](($size.Width - $canvas) / 2))
     $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add((Center-Line "CODEX USAGE DASHBOARD v$($Script:Version)" $canvas))
+    $lines.Add((Center-Line "CODEX USAGE DASHBOARD v$($Script:AppVersion)" $canvas))
     $lines.Add((Center-Line "Windows PowerShell | Plan: $($State.Plan)" $canvas))
     $lines.Add(('-' * $canvas))
     $access = if ($State.Allowed -and -not $State.LimitReached) { 'AVAILABLE' } else { 'RATE LIMITED' }
