@@ -72,6 +72,29 @@ resume_launch() {
   export RESUME_PID RESUME_LOG_FILE
 }
 
+resume_notify_available() {
+  local project_name="$1"
+  local mode="$2"
+  local message
+
+  case "$mode" in
+    notify)
+      message="Codex is available again for $project_name."
+      ;;
+    confirm)
+      message="Codex is available for $project_name. Return to Terminal to choose whether to resume."
+      ;;
+    automatic)
+      message="Codex is available for $project_name. Automatic resume safety checks are running."
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  notify_user 'Codex Dashboard' "$message"
+}
+
 resume_handle_transition() {
   local previous_allowed="$1"
   local current_allowed="$2"
@@ -87,6 +110,7 @@ resume_handle_transition() {
   resume_event_was_handled "$event_id" && return 0
 
   if [[ -z "$project_json" ]]; then
+    notify_user 'Codex Dashboard' 'Codex is available, but no default project is configured.'
     printf 'Codex is available, but no default project is configured.\n' >&2
     return 1
   fi
@@ -95,6 +119,8 @@ resume_handle_transition() {
   project_path="$(jq -r '.path' <<<"$project_json")"
   prompt="$(config_get '.resume.prompt')"
 
+  resume_notify_available "$project_name" "$mode"
+
   if [[ "$mode" == 'notify' ]]; then
     printf '\aCodex is available again for project: %s\n' "$project_name"
     resume_mark_event_handled "$event_id"
@@ -102,6 +128,7 @@ resume_handle_transition() {
   fi
 
   resume_safety_check "$project_path" || {
+    notify_user 'Codex resume blocked' "$RESUME_BLOCK_REASON"
     printf 'Resume blocked: %s\n' "$RESUME_BLOCK_REASON" >&2
     return 1
   }
@@ -118,19 +145,23 @@ resume_handle_transition() {
     read -r answer
     [[ "$answer" == 'y' || "$answer" == 'Y' ]] || {
       resume_mark_event_handled "$event_id"
+      notify_user 'Codex Dashboard' "Resume skipped for $project_name."
       return 0
     }
   elif [[ "$mode" == 'automatic' && -n "$RESUME_GIT_STATUS" ]]; then
+    notify_user 'Codex resume blocked' "Automatic resume was blocked because $project_name has uncommitted changes."
     printf 'Automatic resume blocked because the Git working tree has changes.\n' >&2
     return 1
   fi
 
   command -v codex >/dev/null 2>&1 || {
+    notify_user 'Codex resume failed' 'Codex CLI is not installed or not on PATH.'
     printf 'Codex CLI is not installed or not on PATH.\n' >&2
     return 1
   }
 
   resume_launch "$project_path" "$prompt"
   resume_mark_event_handled "$event_id"
+  notify_user 'Codex resume started' "Resuming the most recent Codex session for $project_name."
   printf 'Started Codex resume. Log: %s\n' "$RESUME_LOG_FILE"
 }
