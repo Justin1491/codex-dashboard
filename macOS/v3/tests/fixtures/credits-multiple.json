@@ -1,0 +1,15 @@
+{
+  "available_count": 2,
+  "credits": [
+    {
+      "status": "available",
+      "granted_at": "2026-07-10T12:00:00Z",
+      "expires_at": "2026-07-20T12:00:00Z"
+    },
+    {
+      "status": "expired",
+      "granted_at": "2026-06-10T12:00:00Z",
+      "expires_at": "2026-06-20T12:00:00Z"
+    }
+  ]
+}
