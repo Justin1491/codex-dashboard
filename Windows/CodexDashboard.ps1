@@ -8,7 +8,7 @@ param(
     [switch]$Version
 )
 
-Set-StrictMode -Version 2.0
+Set-StrictMode -Version 1.0
 $ErrorActionPreference = 'Stop'
 
 $Script:Version = '2.2.0'
@@ -273,11 +273,12 @@ function Start-CodexResume {
 
     $logDir = Join-Path ([IO.Path]::GetTempPath()) 'CodexDashboard'
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-    $logPath = Join-Path $logDir ("resume-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $logPath = Join-Path $logDir ("resume-{0}.out.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $errorLogPath = $logPath.Replace('.out.log','.err.log')
     $escapedPrompt = $Prompt.Replace('"','\"')
     $arguments = "exec resume --last `"$escapedPrompt`""
     try {
-        Start-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $Project -RedirectStandardOutput $logPath -RedirectStandardError $logPath -WindowStyle Hidden | Out-Null
+        Start-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $Project -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath -WindowStyle Hidden | Out-Null
         $Script:ResumeStartedForReset = $State.FiveReset
         $Script:ResumeStatus = 'Started'
         $Script:ResumeLog = $logPath
