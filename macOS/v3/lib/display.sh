@@ -230,11 +230,20 @@ display_render_full() {
   local state_json="$1"
   local automation_status="${2:-Waiting}"
   local api_status="${3:-Connected}"
-  local resume_mode="${4:-off}"
+  local resume_mode="${4:-}"
   local project_json="${5:-}"
   local plan allowed credits_count credit_count i record
   local five_remaining five_used five_reset week_remaining week_used week_reset
   local project_name project_path project_readiness resume_action
+
+  if [[ -z "$resume_mode" ]] && declare -F config_get >/dev/null 2>&1; then
+    resume_mode="$(config_get '.resumeMode' 2>/dev/null || printf 'off')"
+  fi
+  [[ -n "$resume_mode" ]] || resume_mode='off'
+
+  if [[ -z "$project_json" ]] && declare -F project_default_json >/dev/null 2>&1; then
+    project_json="$(project_default_json 2>/dev/null || true)"
+  fi
 
   credit_count="$(jq '.resetCredits.records | length' <<<"$state_json")"
   display_calculate_layout "$credit_count"
