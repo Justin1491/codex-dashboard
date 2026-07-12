@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-VERSION='3.0.0-alpha.1'
+VERSION='3.0.0-alpha.2'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -13,7 +13,9 @@ source "$LIB_DIR/model.sh"
 source "$LIB_DIR/countdown.sh"
 source "$LIB_DIR/config.sh"
 source "$LIB_DIR/projects.sh"
+source "$LIB_DIR/notifications.sh"
 source "$LIB_DIR/resume.sh"
+source "$LIB_DIR/setup.sh"
 
 RESET=$'\033[0m'
 BOLD=$'\033[1m'
@@ -34,10 +36,12 @@ Usage:
 
 Commands:
   dashboard                         Open the live dashboard (default)
-  setup                             Create and display the default configuration
+  setup                             Run interactive setup
   config show                       Display configuration
+  config resume-mode MODE           Set off, notify, confirm, or automatic
+  config refresh SECONDS            Set API refresh interval
   config reset                      Reset configuration
-  project add PATH [NAME]           Register a project
+  project add [PATH] [NAME]         Register a project; opens a folder picker without PATH
   project list                      List registered projects
   project remove NAME_OR_ID         Remove a project
   project default NAME_OR_ID        Set the default project
@@ -58,18 +62,17 @@ print_version() {
 }
 
 command_setup() {
-  ensure_config || return 1
-  printf 'Codex Dashboard configuration is ready.\n\n'
-  config_show
-  printf '\nRegister a project with:\n'
-  printf '  codex-dashboard project add /path/to/project\n'
+  setup_wizard
 }
 
 command_config() {
   local action="${1:-show}"
+  shift || true
 
   case "$action" in
     show) config_show ;;
+    resume-mode) config_set_resume_mode "${1:-}" ;;
+    refresh) config_set_refresh_seconds "${1:-}" ;;
     reset) config_reset ;;
     *)
       printf 'Unknown config command: %s\n' "$action" >&2
@@ -141,6 +144,11 @@ command_dashboard() {
     printf 'curl is required.\n' >&2
     return 1
   }
+
+  if ! config_exists; then
+    printf 'No Codex Dashboard configuration was found.\n\n'
+    setup_wizard || return 1
+  fi
 
   ensure_config || return 1
   load_codex_credentials || return 1
