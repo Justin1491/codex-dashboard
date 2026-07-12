@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+VERSION='3.0.0-alpha.1'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+APP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+LIB_DIR="$APP_ROOT/lib"
+
+source "$LIB_DIR/auth.sh"
+source "$LIB_DIR/api.sh"
+source "$LIB_DIR/model.sh"
+source "$LIB_DIR/countdown.sh"
+source "$LIB_DIR/config.sh"
+source "$LIB_DIR/projects.sh"
+source "$LIB_DIR/resume.sh"
+
+RESET=$'\033[0m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+GREEN=$'\033[32m'
+YELLOW=$'\033[33m'
+CYAN=$'\033[36m'
+RED=$'\033[31m'
+
+source "$LIB_DIR/display.sh"
+
+print_help() {
+  cat <<EOF_HELP
+Codex Dashboard $VERSION
+
+Usage:
+  codex-dashboard [command] [arguments]
+
+Commands:
+  dashboard                         Open the live dashboard (default)
+  setup                             Create and display the default configuration
+  config show                       Display configuration
+  config reset                      Reset configuration
+  project add PATH [NAME]           Register a project
+  project list                      List registered projects
+  project remove NAME_OR_ID         Remove a project
+  project default NAME_OR_ID        Set the default project
+  version                           Display the version
+  help                              Display this help
+
+Options:
+  --version                         Display the version
+  --help                            Display this help
+
+Configuration:
+  $(config_path)
+EOF_HELP
+}
+
+print_version() {
+  printf 'Codex Dashboard %s\n' "$VERSION"
+}
+
+command_setup() {
+  ensure_config || return 1
+  printf 'Codex Dashboard configuration is ready.\n\n'
+  config_show
+  printf '\nRegister a project with:\n'
+  printf '  codex-dashboard project add /path/to/project\n'
+}
+
+command_config() {
+  local action="${1:-show}"
+
+  case "$action" in
+    show) config_show ;;
+    reset) config_reset ;;
+    *)
+      printf 'Unknown config command: %s\n' "$action" >&2
+      return 1
+      ;;
+  esac
+}
+
+command_project() {
+  local action="${1:-list}"
+  shift || true
+
+  case "$action" in
+    add) project_add "${1:-}" "${2:-}" ;;
+    list) project_list ;;
+    remove) project_remove "${1:-}" ;;
+    default) project_set_default "${1:-}" ;;
+    *)
+      printf 'Unknown project command: %s\n' "$action" >&2
+      return 1
+      ;;
+  esac
+}
+
+dashboard_cleanup() {
+  display_leave
+}
+
+command_dashboard() {
+  local refresh_seconds
+  local last_refresh=0
+  local now
+  local previous_allowed='unknown'
+  local current_allowed
+  local five_reset
+  local resume_mode
+  local project_json
+  local api_status='Connecting'
+  local automation_status='Waiting'
+  local old_rows=0 old_cols=0
+  local redraw=true
+
+  command -v jq >/dev/null 2>&1 || {
+    printf 'jq is required. Install it with: brew install jq\n' >&2
+    return 1
+  }
+  command -v curl >/dev/null 2>&1 || {
+    printf 'curl is required.\n' >&2
+    return 1
+  }
+
+  ensure_config || return 1
+  load_codex_credentials || return 1
+
+  refresh_seconds="$(config_get '.refreshSeconds')"
+  resume_mode="$(config_get '.resumeMode')"
+  project_json="$(project_default_json)"
+
+  if ! refresh_raw_state; then
+    printf 'Unable to retrieve initial Codex usage data.\n' >&2
+    return 1
+  fi
+
+  NORMALIZED_STATE="$(normalize_codex_state "$RAW_USAGE_JSON" "$RAW_CREDITS_JSON")" || return 1
+  previous_allowed="$(jq -r '.access.allowed' <<<"$NORMALIZED_STATE")"
+  last_refresh="$(date +%s)"
+  api_status="Connected; refresh every ${refresh_seconds}s"
+
+  trap dashboard_cleanup EXIT INT TERM
+  display_enter
+  display_render_full "$NORMALIZED_STATE" "$automation_status" "$api_status"
+
+  while true; do
+    now="$(date +%s)"
+    terminal_size_read
+
+    if [[ "$DISPLAY_TERM_ROWS" != "$old_rows" || "$DISPLAY_TERM_COLS" != "$old_cols" ]]; then
+      old_rows="$DISPLAY_TERM_ROWS"
+      old_cols="$DISPLAY_TERM_COLS"
+      redraw=true
+    fi
+
+    if ((now - last_refresh >= refresh_seconds)); then
+      if refresh_raw_state; then
+        previous_allowed="$(jq -r '.access.allowed' <<<"$NORMALIZED_STATE")"
+        NORMALIZED_STATE="$(normalize_codex_state "$RAW_USAGE_JSON" "$RAW_CREDITS_JSON")"
+        current_allowed="$(jq -r '.access.allowed' <<<"$NORMALIZED_STATE")"
+        five_reset="$(jq -r '.usageWindows[0].resetAt' <<<"$NORMALIZED_STATE")"
+        api_status="Last refresh: $(date '+%-I:%M:%S %p')"
+
+        if [[ "$previous_allowed" == 'false' && "$current_allowed" == 'true' ]]; then
+          automation_status="Codex became available"
+          if resume_handle_transition \
+            "$previous_allowed" \
+            "$current_allowed" \
+            "$five_reset" \
+            "$resume_mode" \
+            "$project_json"; then
+            automation_status="Resume transition handled"
+          else
+            automation_status="Resume transition requires attention"
+          fi
+        elif [[ "$current_allowed" == 'false' ]]; then
+          automation_status="Waiting for rate-limit reset"
+        else
+          automation_status="Codex is available"
+        fi
+
+        redraw=true
+      else
+        api_status="Refresh failed; showing last good data"
+        redraw=true
+      fi
+
+      last_refresh="$now"
+    fi
+
+    if [[ "$redraw" == 'true' ]]; then
+      display_render_full "$NORMALIZED_STATE" "$automation_status" "$api_status"
+      redraw=false
+    else
+      display_update_countdowns "$NORMALIZED_STATE"
+    fi
+
+    sleep 1
+  done
+}
+
+main() {
+  local command="${1:-dashboard}"
+
+  case "$command" in
+    dashboard)
+      shift || true
+      command_dashboard "$@"
+      ;;
+    setup)
+      shift || true
+      command_setup "$@"
+      ;;
+    config)
+      shift || true
+      command_config "$@"
+      ;;
+    project)
+      shift || true
+      command_project "$@"
+      ;;
+    version|--version|-V)
+      print_version
+      ;;
+    help|--help|-h)
+      print_help
+      ;;
+    *)
+      printf 'Unknown command: %s\n\n' "$command" >&2
+      print_help >&2
+      return 1
+      ;;
+  esac
+}
+
+main "$@"
