@@ -11,7 +11,9 @@ source "$ROOT/lib/model.sh"
 source "$ROOT/lib/countdown.sh"
 source "$ROOT/lib/config.sh"
 source "$ROOT/lib/projects.sh"
+source "$ROOT/lib/notifications.sh"
 source "$ROOT/lib/resume.sh"
+source "$ROOT/lib/setup.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -90,18 +92,38 @@ missing="$(normalize_codex_state "$(cat "$FIXTURES/usage-missing-fields.json")" 
 assert_equal 'unknown' "$(jq -r '.plan' <<<"$missing")" 'defaults missing plan'
 assert_equal '100' "$(jq -r '.usageWindows[0].remainingPercent' <<<"$missing")" 'defaults missing usage window'
 
-printf '\n== Configuration and projects ==\n'
+printf '\n== Configuration, setup, and projects ==\n'
 config_tmp="$(mktemp -d)"
 export CODEX_DASHBOARD_CONFIG_DIR="$config_tmp/config"
-mkdir -p "$config_tmp/Project One"
+mkdir -p "$config_tmp/Project One" "$config_tmp/Project Two"
 assert_success 'creates default config' ensure_config
 assert_equal 'confirm' "$(config_get '.resumeMode')" 'uses safe default resume mode'
+assert_equal 'false' "$(config_get '.setupComplete')" 'new config requires first-run setup'
+assert_success 'sets notify resume mode' config_set_resume_mode notify
+assert_equal 'notify' "$(config_get '.resumeMode')" 'stores notify resume mode'
+assert_failure 'rejects invalid resume mode' config_set_resume_mode reckless
+assert_success 'sets refresh interval' config_set_refresh_seconds 30
+assert_equal '30' "$(config_get '.refreshSeconds')" 'stores refresh interval'
 assert_success 'adds project' project_add "$config_tmp/Project One" 'Project One'
 assert_equal '1' "$(jq '.projects | length' "$(config_path)")" 'stores project'
 assert_equal 'project-one' "$(jq -r '.defaultProjectId' "$(config_path)")" 'sets first project as default'
 assert_failure 'rejects duplicate project' project_add "$config_tmp/Project One" 'Project One'
+export CODEX_DASHBOARD_FOLDER_PICKER_RESULT="$config_tmp/Project Two"
+assert_equal "$config_tmp/Project Two" "$(project_select_folder)" 'folder picker returns selected project'
+unset CODEX_DASHBOARD_FOLDER_PICKER_RESULT
 assert_success 'removes project' project_remove 'project-one'
 assert_equal '0' "$(jq '.projects | length' "$(config_path)")" 'removes project from config'
+assert_success 'applies confirmed setup atomically' setup_apply automatic 45 "$config_tmp/Project Two" 'Project Two'
+assert_equal 'true' "$(config_get '.setupComplete')" 'marks setup complete'
+assert_equal 'automatic' "$(config_get '.resumeMode')" 'automatic mode requires explicit setup selection'
+assert_equal '45' "$(config_get '.refreshSeconds')" 'setup stores refresh interval'
+
+printf '\n== Notifications ==\n'
+notification_file="$config_tmp/notifications.log"
+export CODEX_DASHBOARD_NOTIFICATION_CAPTURE="$notification_file"
+assert_success 'captures notification' notify_user 'Codex Dashboard' 'Codex is available.'
+assert_file_contains "$notification_file" $'Codex Dashboard\tCodex is available.' 'stores notification title and message'
+unset CODEX_DASHBOARD_NOTIFICATION_CAPTURE
 
 printf '\n== Resume state ==\n'
 export CODEX_DASHBOARD_STATE_DIR="$config_tmp/state"
