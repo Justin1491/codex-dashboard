@@ -4,14 +4,23 @@ set -uo pipefail
 TEST_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$TEST_DIR/.." && pwd -P)"
 
+# These formatting globals are consumed by the sourced renderer.
+# shellcheck disable=SC2034
 RESET=''
+# shellcheck disable=SC2034
 BOLD=''
+# shellcheck disable=SC2034
 DIM=''
+# shellcheck disable=SC2034
 GREEN=''
+# shellcheck disable=SC2034
 YELLOW=''
+# shellcheck disable=SC2034
 CYAN=''
+# shellcheck disable=SC2034
 RED=''
 
+# shellcheck source=../lib/display.sh
 source "$ROOT/lib/display.sh"
 
 TESTS_RUN=0
