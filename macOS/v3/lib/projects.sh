@@ -7,15 +7,48 @@ project_slug() {
     sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
 }
 
+project_select_folder() {
+  local selected=''
+
+  if [[ -n "${CODEX_DASHBOARD_FOLDER_PICKER_RESULT:-}" ]]; then
+    selected="$CODEX_DASHBOARD_FOLDER_PICKER_RESULT"
+  elif command -v osascript >/dev/null 2>&1; then
+    selected="$(osascript <<'APPLESCRIPT' 2>/dev/null
+try
+  set selectedFolder to choose folder with prompt "Choose a Codex project folder"
+  return POSIX path of selectedFolder
+on error number -128
+  return ""
+end try
+APPLESCRIPT
+)"
+  else
+    printf 'Project folder path: ' >&2
+    read -r selected
+  fi
+
+  selected="${selected%/}"
+
+  [[ -n "$selected" ]] || return 1
+  [[ -d "$selected" ]] || {
+    printf 'Project directory does not exist: %s\n' "$selected" >&2
+    return 1
+  }
+
+  (cd "$selected" && pwd -P)
+}
+
 project_add() {
   local path="${1:-}"
   local name="${2:-}"
   local absolute_path base id existing
 
-  [[ -n "$path" ]] || {
-    printf 'Project path is required.\n' >&2
-    return 1
-  }
+  if [[ -z "$path" ]]; then
+    path="$(project_select_folder)" || {
+      printf 'No project selected.\n' >&2
+      return 1
+    }
+  fi
 
   [[ -d "$path" ]] || {
     printf 'Project directory does not exist: %s\n' "$path" >&2
