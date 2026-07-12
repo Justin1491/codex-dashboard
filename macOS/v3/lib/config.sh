@@ -8,10 +8,15 @@ config_path() {
   printf '%s/config.json' "$(config_dir)"
 }
 
+config_exists() {
+  [[ -f "$(config_path)" ]]
+}
+
 default_config_json() {
   cat <<'JSON'
 {
   "version": 1,
+  "setupComplete": false,
   "refreshSeconds": 60,
   "resumeMode": "confirm",
   "defaultProjectId": null,
@@ -37,6 +42,7 @@ validate_config_json() {
   jq -e '
     .resumeMode as $mode |
     .version == 1 and
+    ((.setupComplete // false) | type == "boolean") and
     (.refreshSeconds | type == "number") and
     (.refreshSeconds >= 1) and
     (["off", "notify", "confirm", "automatic"] | index($mode)) != null and
@@ -44,6 +50,24 @@ validate_config_json() {
     (.display | type == "object") and
     (.resume | type == "object")
   ' "$path" >/dev/null 2>&1
+}
+
+config_migrate() {
+  local path temp
+  path="$(config_path)"
+  temp="${path}.migrate.$$"
+
+  jq '
+    if has("setupComplete") then .
+    else . + {setupComplete: true}
+    end
+  ' "$path" >"$temp" || {
+    rm -f "$temp"
+    return 1
+  }
+
+  mv "$temp" "$path"
+  chmod 600 "$path"
 }
 
 ensure_config() {
@@ -56,6 +80,8 @@ ensure_config() {
   if [[ ! -f "$path" ]]; then
     default_config_json >"$path"
     chmod 600 "$path"
+  else
+    config_migrate || return 1
   fi
 
   validate_config_json "$path" || {
@@ -99,4 +125,41 @@ config_update() {
   }
   mv "$temp" "$path"
   chmod 600 "$path"
+}
+
+config_validate_resume_mode() {
+  case "${1:-}" in
+    off|notify|confirm|automatic) return 0 ;;
+    *)
+      printf 'Invalid resume mode: %s\n' "${1:-}" >&2
+      printf 'Choose: off, notify, confirm, or automatic.\n' >&2
+      return 1
+      ;;
+  esac
+}
+
+config_validate_refresh_seconds() {
+  local seconds="${1:-}"
+  [[ "$seconds" =~ ^[1-9][0-9]*$ ]] || {
+    printf 'Refresh interval must be a positive whole number.\n' >&2
+    return 1
+  }
+}
+
+config_set_resume_mode() {
+  local mode="${1:-}"
+  config_validate_resume_mode "$mode" || return 1
+  config_update '.resumeMode = $mode' --arg mode "$mode"
+  printf 'Resume mode set to: %s\n' "$mode"
+}
+
+config_set_refresh_seconds() {
+  local seconds="${1:-}"
+  config_validate_refresh_seconds "$seconds" || return 1
+  config_update '.refreshSeconds = $seconds' --argjson seconds "$seconds"
+  printf 'Refresh interval set to: %ss\n' "$seconds"
+}
+
+config_mark_setup_complete() {
+  config_update '.setupComplete = true'
 }
