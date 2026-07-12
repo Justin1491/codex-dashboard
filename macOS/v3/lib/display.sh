@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
-DASHBOARD_WIDTH=116
-DASHBOARD_MIN_ROWS=24
+DASHBOARD_WIDTH=132
+DASHBOARD_MIN_ROWS=30
 DISPLAY_ORIGIN_COL=1
 DISPLAY_TERM_ROWS=24
 DISPLAY_TERM_COLS=80
 DISPLAY_LAYOUT_OK=false
-DISPLAY_CREDIT_FIRST_ROW=18
-DISPLAY_FOOTER_ROW=22
+DISPLAY_USAGE_FIRST_ROW=18
+DISPLAY_CREDIT_FIRST_ROW=24
+DISPLAY_FOOTER_ROW=28
 
 terminal_size_read() {
   local size rows cols
@@ -23,7 +24,12 @@ terminal_size_read() {
 
 display_calculate_layout() {
   local credit_count="${1:-0}"
-  local required_rows=$((DISPLAY_CREDIT_FIRST_ROW + (credit_count > 0 ? credit_count : 1) + 6))
+  local credit_rows
+  local required_rows
+
+  credit_rows="$credit_count"
+  ((credit_rows < 1)) && credit_rows=1
+  required_rows=$((DISPLAY_CREDIT_FIRST_ROW + credit_rows + 6))
 
   terminal_size_read
 
@@ -36,7 +42,7 @@ display_calculate_layout() {
 
   DISPLAY_LAYOUT_OK=true
   DISPLAY_ORIGIN_COL=$(((DISPLAY_TERM_COLS - DASHBOARD_WIDTH) / 2 + 1))
-  DISPLAY_FOOTER_ROW=$((DISPLAY_CREDIT_FIRST_ROW + (credit_count > 0 ? credit_count : 1) + 2))
+  DISPLAY_FOOTER_ROW=$((DISPLAY_CREDIT_FIRST_ROW + credit_rows + 2))
 }
 
 display_enter() {
@@ -71,6 +77,28 @@ display_center() {
   printf '%*s%s' "$left" '' "$text"
 }
 
+display_truncate() {
+  local text="${1:-}"
+  local width="${2:-1}"
+
+  if ((${#text} <= width)); then
+    printf '%s' "$text"
+  elif ((width > 3)); then
+    printf '%.*s...' "$((width - 3))" "$text"
+  else
+    printf '%.*s' "$width" "$text"
+  fi
+}
+
+display_section_title() {
+  local row="$1"
+  local title="$2"
+  local prefix="-- $title "
+  local remaining=$((DASHBOARD_WIDTH - ${#prefix}))
+  ((remaining < 0)) && remaining=0
+  display_write "$row" 1 "${CYAN}${BOLD}${prefix}$(display_repeat '-' "$remaining")${RESET}"
+}
+
 display_bar() {
   local remaining="$1"
   local width=20 filled empty
@@ -83,6 +111,76 @@ display_bar() {
   display_repeat '#' "$filled"
   display_repeat '-' "$empty"
   printf ']'
+}
+
+display_resume_action_text() {
+  case "${1:-off}" in
+    off)
+      printf 'Dashboard only; no resume action'
+      ;;
+    notify)
+      printf 'Notify when Codex becomes available'
+      ;;
+    confirm)
+      printf 'Ask before resuming the latest safe Codex session'
+      ;;
+    automatic)
+      printf 'Automatically resume the latest safe Codex session'
+      ;;
+    *)
+      printf 'Unknown resume mode'
+      ;;
+  esac
+}
+
+display_project_name() {
+  local project_json="${1:-}"
+
+  if [[ -z "$project_json" ]]; then
+    printf 'Not configured'
+    return
+  fi
+
+  jq -r '.name // "Not configured"' <<<"$project_json" 2>/dev/null ||
+    printf 'Not configured'
+}
+
+display_project_path() {
+  local project_json="${1:-}"
+
+  if [[ -z "$project_json" ]]; then
+    printf 'Not configured'
+    return
+  fi
+
+  jq -r '.path // "Not configured"' <<<"$project_json" 2>/dev/null ||
+    printf 'Not configured'
+}
+
+display_project_readiness() {
+  local project_json="${1:-}"
+  local path
+
+  if [[ -z "$project_json" ]]; then
+    printf 'No default project'
+    return
+  fi
+
+  path="$(jq -r '.path // empty' <<<"$project_json" 2>/dev/null || true)"
+
+  if [[ -z "$path" ]]; then
+    printf 'No default project'
+  elif [[ ! -d "$path" ]]; then
+    printf 'Missing folder'
+  elif git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if [[ -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
+      printf 'Working tree has changes'
+    else
+      printf 'Ready (clean Git repository)'
+    fi
+  else
+    printf 'Ready (folder exists)'
+  fi
 }
 
 display_usage_row() {
@@ -132,8 +230,11 @@ display_render_full() {
   local state_json="$1"
   local automation_status="${2:-Waiting}"
   local api_status="${3:-Connected}"
+  local resume_mode="${4:-off}"
+  local project_json="${5:-}"
   local plan allowed credits_count credit_count i record
   local five_remaining five_used five_reset week_remaining week_used week_reset
+  local project_name project_path project_readiness resume_action
 
   credit_count="$(jq '.resetCredits.records | length' <<<"$state_json")"
   display_calculate_layout "$credit_count"
@@ -157,28 +258,42 @@ display_render_full() {
   week_used="$(jq -r '.usageWindows[1].usedPercent' <<<"$state_json")"
   week_reset="$(jq -r '.usageWindows[1].resetAt' <<<"$state_json")"
 
+  project_name="$(display_project_name "$project_json")"
+  project_path="$(display_project_path "$project_json")"
+  project_readiness="$(display_project_readiness "$project_json")"
+  resume_action="$(display_resume_action_text "$resume_mode")"
+
   display_write 1 1 "${CYAN}${BOLD}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
-  display_write 2 1 "${CYAN}${BOLD}$(display_center 'CODEX DASHBOARD V3' "$DASHBOARD_WIDTH")${RESET}"
+  display_write 2 1 "${CYAN}${BOLD}$(display_center 'CODEX DASHBOARD V3 ALPHA 2' "$DASHBOARD_WIDTH")${RESET}"
   display_write 3 1 "${CYAN}${BOLD}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
 
-  display_write 5 3 "${BOLD}Plan:${RESET} $(printf '%-18s' "$plan")"
+  display_section_title 5 'OVERVIEW'
+  display_write 6 3 "${BOLD}Plan:${RESET} $(printf '%-18s' "$plan")"
   if [[ "$allowed" == 'true' ]]; then
-    display_write 5 35 "${BOLD}Access:${RESET} ${GREEN}AVAILABLE${RESET}"
+    display_write 6 35 "${BOLD}Access:${RESET} ${GREEN}AVAILABLE${RESET}"
   else
-    display_write 5 35 "${BOLD}Access:${RESET} ${RED}LIMIT REACHED${RESET}"
+    display_write 6 35 "${BOLD}Access:${RESET} ${RED}LIMIT REACHED${RESET}"
   fi
-  display_write 6 3 "${BOLD}Reset credits:${RESET} ${GREEN}$credits_count${RESET}"
+  display_write 6 70 "${BOLD}Reset credits:${RESET} ${GREEN}$credits_count${RESET}"
+  display_write 7 3 "${DIM}API: $(display_truncate "$api_status" 120)${RESET}"
 
-  display_write 8 1 "${DIM}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
-  display_write 9 3 "${BOLD}$(printf '%-10s %-27s %-8s %-31s %-19s' 'WINDOW' 'REMAINING' 'USED' 'RESETS' 'TIME TO RESET')${RESET}"
-  display_write 10 1 "${DIM}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
+  display_section_title 9 'AUTO-RESUME'
+  display_write 10 3 "${BOLD}Mode:${RESET} $(printf '%-14s' "$resume_mode")"
+  display_write 10 30 "${BOLD}Default project:${RESET} ${GREEN}$(display_truncate "$project_name" 35)${RESET}"
+  display_write 11 3 "${BOLD}Project path:${RESET} $(display_truncate "$project_path" 113)"
+  display_write 12 3 "${BOLD}Action on reset:${RESET} $(display_truncate "$resume_action" 109)"
+  display_write 13 3 "${BOLD}Project status:${RESET} $(display_truncate "$project_readiness" 109)"
 
-  display_usage_row 12 '5-hour' "$five_remaining" "$five_used" "$five_reset"
-  display_usage_row 13 'Weekly' "$week_remaining" "$week_used" "$week_reset"
-
-  display_write 15 1 "${DIM}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
-  display_write 16 3 "${BOLD}$(printf '%-11s %-32s %-32s %-19s' 'STATUS' 'GRANTED' 'EXPIRES' 'TIME REMAINING')${RESET}"
+  display_section_title 15 'USAGE WINDOWS'
+  display_write 16 3 "${BOLD}$(printf '%-10s %-27s %-8s %-31s %-19s' 'WINDOW' 'REMAINING' 'USED' 'RESETS' 'TIME TO RESET')${RESET}"
   display_write 17 1 "${DIM}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
+
+  display_usage_row "$DISPLAY_USAGE_FIRST_ROW" '5-hour' "$five_remaining" "$five_used" "$five_reset"
+  display_usage_row "$((DISPLAY_USAGE_FIRST_ROW + 1))" 'Weekly' "$week_remaining" "$week_used" "$week_reset"
+
+  display_section_title 21 'RESET CREDIT STATUS'
+  display_write 22 3 "${BOLD}$(printf '%-11s %-32s %-32s %-19s' 'STATUS' 'GRANTED' 'EXPIRES' 'TIME REMAINING')${RESET}"
+  display_write 23 1 "${DIM}$(display_repeat '-' "$DASHBOARD_WIDTH")${RESET}"
 
   if ((credit_count == 0)); then
     display_write "$DISPLAY_CREDIT_FIRST_ROW" 3 "${DIM}No individual reset-credit records returned.${RESET}"
@@ -189,9 +304,8 @@ display_render_full() {
     done
   fi
 
-  display_write "$DISPLAY_FOOTER_ROW" 3 "${DIM}Automation: $(printf '%-88s' "$automation_status")${RESET}"
-  display_write "$((DISPLAY_FOOTER_ROW + 1))" 3 "${DIM}API:        $(printf '%-88s' "$api_status")${RESET}"
-  display_write "$((DISPLAY_FOOTER_ROW + 2))" 3 "${DIM}Terminal: ${DISPLAY_TERM_COLS}x${DISPLAY_TERM_ROWS} | Control + C to exit${RESET}"
+  display_write "$DISPLAY_FOOTER_ROW" 3 "${DIM}Automation: $(printf '%-112s' "$automation_status")${RESET}"
+  display_write "$((DISPLAY_FOOTER_ROW + 1))" 3 "${DIM}Terminal: ${DISPLAY_TERM_COLS}x${DISPLAY_TERM_ROWS} | Control + C to exit${RESET}"
 }
 
 display_update_countdowns() {
@@ -201,10 +315,12 @@ display_update_countdowns() {
   [[ "$DISPLAY_LAYOUT_OK" == 'true' ]] || return
 
   reset_at="$(jq -r '.usageWindows[0].resetAt' <<<"$state_json")"
-  display_write 12 89 "${YELLOW}$(printf '%-19s' "$(countdown_format "$reset_at")")${RESET}"
+  display_write "$DISPLAY_USAGE_FIRST_ROW" 89 \
+    "${YELLOW}$(printf '%-19s' "$(countdown_format "$reset_at")")${RESET}"
 
   reset_at="$(jq -r '.usageWindows[1].resetAt' <<<"$state_json")"
-  display_write 13 89 "${YELLOW}$(printf '%-19s' "$(countdown_format "$reset_at")")${RESET}"
+  display_write "$((DISPLAY_USAGE_FIRST_ROW + 1))" 89 \
+    "${YELLOW}$(printf '%-19s' "$(countdown_format "$reset_at")")${RESET}"
 
   credit_count="$(jq '.resetCredits.records | length' <<<"$state_json")"
   for ((i = 0; i < credit_count; i++)); do
