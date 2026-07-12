@@ -21,5 +21,7 @@ jobs:
         run: find macOS/v3 -type f \( -name '*.sh' -o -path 'macOS/v3/bin/codex-dashboard' \) -print0 | xargs -0 -n1 bash -n
       - name: Run ShellCheck
         run: shellcheck macOS/v3/bin/codex-dashboard macOS/v3/lib/*.sh macOS/v3/*.sh macOS/v3/tests/*.sh
-      - name: Run tests
+      - name: Run regression tests
         run: bash macOS/v3/tests/run-tests.sh
+      - name: Run dashboard summary tests
+        run: bash macOS/v3/tests/test-display-summary.sh
