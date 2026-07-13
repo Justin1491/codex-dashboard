@@ -14,8 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Patch macOS and Windows dashboards
         shell: python
@@ -23,133 +21,173 @@ jobs:
           from pathlib import Path
           import re
 
-          def sub_once(text, pattern, replacement, label, flags=0):
-              updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)
-              if count != 1:
-                  raise SystemExit(f"Expected exactly one {label}; found {count}")
-              return updated
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one {label}; found {text.count(old)}")
+              return text.replace(old, new, 1)
 
           mac_path = Path("macOS/codex-usage-dashboard-v2.2.sh")
           mac = mac_path.read_text()
-          mac = sub_once(mac, r'VERSION="2\.2\.0"', 'VERSION="2.3.0"', 'macOS version')
-          mac = sub_once(mac, r'after the five-hour(?: rate)? limit resets\.', 'after Codex access becomes available again.', 'macOS help wording')
-          mac = sub_once(
-              mac,
-              r'''  FIVE_USED="\$\(jq -r '\.rate_limit\.primary_window\.used_percent // 0' <<<"\$USAGE_JSON"\)"\n  FIVE_RESET="\$\(jq -r '\.rate_limit\.primary_window\.reset_at // 0' <<<"\$USAGE_JSON"\)"\n  WEEK_USED="\$\(jq -r '\.rate_limit\.secondary_window\.used_percent // 0' <<<"\$USAGE_JSON"\)"\n  WEEK_RESET="\$\(jq -r '\.rate_limit\.secondary_window\.reset_at // 0' <<<"\$USAGE_JSON"\)"\n\n  \[\[ "\$FIVE_USED" =~ \^\[0-9\]\+\$ \]\] \|\| FIVE_USED=0\n  \[\[ "\$WEEK_USED" =~ \^\[0-9\]\+\$ \]\] \|\| WEEK_USED=0\n\n  FIVE_REMAINING=\$\(\(100 - FIVE_USED\)\)''',
-              '''  PRIMARY_WINDOW_AVAILABLE="$(jq -r '(.rate_limit.primary_window? != null) and ((.rate_limit.primary_window.reset_at? // 0) > 0)' <<<"$USAGE_JSON")"
-  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
-    FIVE_USED="$(jq -r '.rate_limit.primary_window.used_percent // 0' <<<"$USAGE_JSON")"
-    FIVE_RESET="$(jq -r '.rate_limit.primary_window.reset_at // 0' <<<"$USAGE_JSON")"
-    PRIMARY_WINDOW_LABEL="$(jq -r '(.rate_limit.primary_window.window_minutes? // 300) as $m | if ($m % 60) == 0 then "\\($m / 60 | floor)-hour" else "Short-term" end' <<<"$USAGE_JSON")"
-  else
-    FIVE_USED=0
-    FIVE_RESET=0
-    PRIMARY_WINDOW_LABEL='Short-term'
-  fi
-  WEEK_USED="$(jq -r '.rate_limit.secondary_window.used_percent // 0' <<<"$USAGE_JSON")"
-  WEEK_RESET="$(jq -r '.rate_limit.secondary_window.reset_at // 0' <<<"$USAGE_JSON")"
+          mac = replace_once(mac, 'VERSION="2.2.0"', 'VERSION="2.3.0"', 'macOS version')
+          mac, count = re.subn(r'after the five-hour(?: rate)? limit resets\.', 'after Codex access becomes available again.', mac, count=1)
+          if count != 1:
+              raise SystemExit('Expected macOS help wording was not found')
 
-  [[ "$FIVE_USED" =~ ^[0-9]+$ ]] || FIVE_USED=0
-  [[ "$WEEK_USED" =~ ^[0-9]+$ ]] || WEEK_USED=0
+          old = "\n".join([
+              '  FIVE_USED="$(jq -r \'.rate_limit.primary_window.used_percent // 0\' <<<"$USAGE_JSON")"',
+              '  FIVE_RESET="$(jq -r \'.rate_limit.primary_window.reset_at // 0\' <<<"$USAGE_JSON")"',
+              '  WEEK_USED="$(jq -r \'.rate_limit.secondary_window.used_percent // 0\' <<<"$USAGE_JSON")"',
+              '  WEEK_RESET="$(jq -r \'.rate_limit.secondary_window.reset_at // 0\' <<<"$USAGE_JSON")"',
+              '',
+              '  [[ "$FIVE_USED" =~ ^[0-9]+$ ]] || FIVE_USED=0',
+              '  [[ "$WEEK_USED" =~ ^[0-9]+$ ]] || WEEK_USED=0',
+              '',
+              '  FIVE_REMAINING=$((100 - FIVE_USED))',
+          ])
+          new = "\n".join([
+              '  PRIMARY_WINDOW_AVAILABLE="$(jq -r \'(.rate_limit.primary_window? != null) and ((.rate_limit.primary_window.reset_at? // 0) > 0)\' <<<"$USAGE_JSON")"',
+              '  if [[ "$PRIMARY_WINDOW_AVAILABLE" == \'true\' ]]; then',
+              '    FIVE_USED="$(jq -r \'.rate_limit.primary_window.used_percent // 0\' <<<"$USAGE_JSON")"',
+              '    FIVE_RESET="$(jq -r \'.rate_limit.primary_window.reset_at // 0\' <<<"$USAGE_JSON")"',
+              '    PRIMARY_WINDOW_LABEL="$(jq -r \'(.rate_limit.primary_window.window_minutes? // 300) as $m | if ($m % 60) == 0 then "\\($m / 60 | floor)-hour" else "Short-term" end\' <<<"$USAGE_JSON")"',
+              '  else',
+              '    FIVE_USED=0',
+              '    FIVE_RESET=0',
+              "    PRIMARY_WINDOW_LABEL='Short-term'",
+              '  fi',
+              '  WEEK_USED="$(jq -r \'.rate_limit.secondary_window.used_percent // 0\' <<<"$USAGE_JSON")"',
+              '  WEEK_RESET="$(jq -r \'.rate_limit.secondary_window.reset_at // 0\' <<<"$USAGE_JSON")"',
+              '',
+              '  [[ "$FIVE_USED" =~ ^[0-9]+$ ]] || FIVE_USED=0',
+              '  [[ "$WEEK_USED" =~ ^[0-9]+$ ]] || WEEK_USED=0',
+              '',
+              '  FIVE_REMAINING=$((100 - FIVE_USED))',
+          ])
+          mac = replace_once(mac, old, new, 'macOS parser block')
 
-  FIVE_REMAINING=$((100 - FIVE_USED))''',
-              'macOS usage parser',
-          )
-          mac = sub_once(
-              mac,
-              r'''  clear_rel_field "\$USAGE_ROW_5H" "\$USAGE_REMAINING_REL_COL" 28\n  clear_rel_field "\$USAGE_ROW_5H" "\$USAGE_USED_REL_COL" 8\n  clear_rel_field "\$USAGE_ROW_5H" "\$USAGE_RESETS_REL_COL" 31\n  write_rel "\$USAGE_ROW_5H" "\$USAGE_REMAINING_REL_COL" "\$\{GREEN\}\$\{five_remaining_text\}\$\{RESET\}"\n  write_rel "\$USAGE_ROW_5H" "\$USAGE_USED_REL_COL" "\$\(printf '%3d%%' "\$FIVE_USED"\)"\n  write_rel "\$USAGE_ROW_5H" "\$USAGE_RESETS_REL_COL" "\$\(epoch_local "\$FIVE_RESET"\)"''',
-              '''  clear_rel_field "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" 28
-  clear_rel_field "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" 8
-  clear_rel_field "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" 31
-  clear_rel_field "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" 18
-  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
-    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${GREEN}${five_remaining_text}${RESET}"
-    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "$(printf '%3d%%' "$FIVE_USED")"
-    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "$(epoch_local "$FIVE_RESET")"
-  else
-    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${DIM}Temporarily not enforced${RESET}"
-    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "${DIM}—${RESET}"
-    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "${DIM}No reset scheduled${RESET}"
-    write_rel "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "${DIM}—${RESET}"
-  fi''',
-              'macOS usage rendering',
-          )
-          mac = sub_once(mac, r'''  write_rel "\$USAGE_ROW_5H" "\$USAGE_WINDOW_REL_COL" '5-hour' ''', '''  write_rel "$USAGE_ROW_5H" "$USAGE_WINDOW_REL_COL" "$PRIMARY_WINDOW_LABEL" ''', 'macOS window label')
-          mac = mac.replace("Waiting for five-hour limit reset", "Waiting for Codex access to reset")
-          mac = sub_once(
-              mac,
-              r'''  update_one_countdown \\\n    "\$USAGE_ROW_5H" "\$USAGE_COUNTDOWN_REL_COL" "\$FIVE_RESET" 'PREV_USAGE' 0''',
-              '''  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
-    update_one_countdown \\
-      "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "$FIVE_RESET" 'PREV_USAGE' 0
-  fi''',
-              'macOS primary countdown',
-          )
+          old = "\n".join([
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" 28',
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" 8',
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" 31',
+              '  write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${GREEN}${five_remaining_text}${RESET}"',
+              '  write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "$(printf \'%3d%%\' "$FIVE_USED")"',
+              '  write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "$(epoch_local "$FIVE_RESET")"',
+          ])
+          new = "\n".join([
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" 28',
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" 8',
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" 31',
+              '  clear_rel_field "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" 18',
+              '  if [[ "$PRIMARY_WINDOW_AVAILABLE" == \'true\' ]]; then',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${GREEN}${five_remaining_text}${RESET}"',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "$(printf \'%3d%%\' "$FIVE_USED")"',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "$(epoch_local "$FIVE_RESET")"',
+              '  else',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${DIM}Temporarily not enforced${RESET}"',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "${DIM}—${RESET}"',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "${DIM}No reset scheduled${RESET}"',
+              '    write_rel "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "${DIM}—${RESET}"',
+              '  fi',
+          ])
+          mac = replace_once(mac, old, new, 'macOS rendering block')
+          mac = replace_once(mac, "  write_rel \"$USAGE_ROW_5H\" \"$USAGE_WINDOW_REL_COL\" '5-hour'", '  write_rel "$USAGE_ROW_5H" "$USAGE_WINDOW_REL_COL" "$PRIMARY_WINDOW_LABEL"', 'macOS window label')
+          mac = mac.replace("RESUME_STATUS='Waiting for five-hour limit reset'", "RESUME_STATUS='Waiting for Codex access to reset'")
+          old = "\n".join([
+              '  update_one_countdown \\',
+              '    "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "$FIVE_RESET" \'PREV_USAGE\' 0',
+          ])
+          new = "\n".join([
+              '  if [[ "$PRIMARY_WINDOW_AVAILABLE" == \'true\' ]]; then',
+              '    update_one_countdown \\',
+              '      "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "$FIVE_RESET" \'PREV_USAGE\' 0',
+              '  fi',
+          ])
+          mac = replace_once(mac, old, new, 'macOS countdown block')
           mac_path.write_text(mac)
 
           win_path = Path("Windows/CodexDashboard.ps1")
           win = win_path.read_text()
-          win = sub_once(win, r"\$Script:AppVersion = '2\.2\.0'", "$Script:AppVersion = '2.3.0'", 'Windows version')
-          win = sub_once(win, r'after the five-hour(?: rate)? limit resets\.', 'after Codex access becomes available again.', 'Windows help wording')
-          win = sub_once(win, r'\$Script:ResumeStartedForReset = 0', '$Script:WasBlocked = $false', 'Windows blocked state')
-          win = sub_once(
-              win,
-              r'''    \$fiveUsed = ConvertTo-Percent \(Get-ObjectPropertyValue \$primary @\('used_percent','usedPercent'\) 0\)\n    \$weekUsed = ConvertTo-Percent \(Get-ObjectPropertyValue \$secondary @\('used_percent','usedPercent'\) 0\)''',
-              '''    $fiveReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $primary @('reset_at','resetAt') 0)
-    $primaryWindowAvailable = ($null -ne $primary -and $fiveReset -gt 0)
-    $fiveUsed = if ($primaryWindowAvailable) { ConvertTo-Percent (Get-ObjectPropertyValue $primary @('used_percent','usedPercent') 0) } else { 0 }
-    $primaryMinutes = [int](Get-ObjectPropertyValue $primary @('window_minutes','windowMinutes') 300)
-    $primaryWindowLabel = if ($primaryWindowAvailable -and $primaryMinutes -gt 0 -and ($primaryMinutes % 60) -eq 0) { "$([int]($primaryMinutes / 60))-hour" } else { 'Short-term' }
-    $weekUsed = ConvertTo-Percent (Get-ObjectPropertyValue $secondary @('used_percent','usedPercent') 0)''',
-              'Windows usage parser',
-          )
-          win = sub_once(
-              win,
-              r'''        FiveUsed = \$fiveUsed\n        FiveRemaining = 100 - \$fiveUsed\n        FiveReset = ConvertTo-EpochSeconds \(Get-ObjectPropertyValue \$primary @\('reset_at','resetAt'\) 0\)''',
-              '''        PrimaryWindowAvailable = $primaryWindowAvailable
-        PrimaryWindowLabel = $primaryWindowLabel
-        FiveUsed = $fiveUsed
-        FiveRemaining = 100 - $fiveUsed
-        FiveReset = $fiveReset''',
-              'Windows state fields',
-          )
-          win = sub_once(
-              win,
-              r'''    \$lines\.Add\(\('5-hour     \{0,3\}% \{1\}   \{2,3\}%       \{3,-36\} \{4\}' -f \$State\.FiveRemaining,\(New-AsciiBar \$State\.FiveRemaining\),\$State\.FiveUsed,\(Format-LocalTime \$State\.FiveReset\),\(Format-Countdown \$State\.FiveReset\)\)\)''',
-              '''    if ($State.PrimaryWindowAvailable) {
-        $lines.Add(('{0,-11} {1,3}% {2}   {3,3}%       {4,-36} {5}' -f $State.PrimaryWindowLabel,$State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))
-    } else {
-        $lines.Add(('Short-term  {0,-50} {1,-36} {2}' -f 'Temporarily not enforced','No reset scheduled','-'))
-    }''',
-              'Windows usage rendering',
-          )
-          win = sub_once(win, r'''    if \(-not \$AutoResume\) \{ return \}\n    if \(\$State\.FiveReset -le 0 -or \$Script:ResumeStartedForReset -eq \$State\.FiveReset\) \{ return \}\n    if \(-not \$State\.Allowed -or \$State\.LimitReached\) \{ return \}''', '''    if (-not $AutoResume) { return }
-    if (-not $State.Allowed -or $State.LimitReached) { return }''', 'Windows resume guard')
-          win = sub_once(win, r'''\n        \$Script:ResumeStartedForReset = \$State\.FiveReset''', '', 'Windows obsolete resume key')
-          win = sub_once(
-              win,
-              r'''                \$Script:LastGoodState = Get-CodexState -Auth \$auth\n                \$Script:LastRefreshError = \$null\n                \$lastApiRefresh = Get-Date\n                Start-CodexResume -State \$Script:LastGoodState''',
-              '''                $Script:LastGoodState = Get-CodexState -Auth $auth
-                $Script:LastRefreshError = $null
-                $lastApiRefresh = Get-Date
-                $blocked = (-not $Script:LastGoodState.Allowed -or $Script:LastGoodState.LimitReached)
-                if ($blocked) {
-                    $Script:WasBlocked = $true
-                    $Script:ResumeStatus = 'Waiting for Codex access to reset'
-                } elseif ($Script:WasBlocked) {
-                    $Script:WasBlocked = $false
-                    Start-CodexResume -State $Script:LastGoodState
-                } elseif ($AutoResume -and $Script:ResumeStatus -ne 'Started') {
-                    $Script:ResumeStatus = 'Armed'
-                }''',
-              'Windows access transition',
-          )
+          win = replace_once(win, "$Script:AppVersion = '2.2.0'", "$Script:AppVersion = '2.3.0'", 'Windows version')
+          win, count = re.subn(r'after the five-hour(?: rate)? limit resets\.', 'after Codex access becomes available again.', win, count=1)
+          if count != 1:
+              raise SystemExit('Expected Windows help wording was not found')
+          win = replace_once(win, '$Script:ResumeStartedForReset = 0', '$Script:WasBlocked = $false', 'Windows blocked state')
+
+          old = "\n".join([
+              "    $fiveUsed = ConvertTo-Percent (Get-ObjectPropertyValue $primary @('used_percent','usedPercent') 0)",
+              "    $weekUsed = ConvertTo-Percent (Get-ObjectPropertyValue $secondary @('used_percent','usedPercent') 0)",
+          ])
+          new = "\n".join([
+              "    $fiveReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $primary @('reset_at','resetAt') 0)",
+              '    $primaryWindowAvailable = ($null -ne $primary -and $fiveReset -gt 0)',
+              "    $fiveUsed = if ($primaryWindowAvailable) { ConvertTo-Percent (Get-ObjectPropertyValue $primary @('used_percent','usedPercent') 0) } else { 0 }",
+              "    $primaryMinutes = [int](Get-ObjectPropertyValue $primary @('window_minutes','windowMinutes') 300)",
+              "    $primaryWindowLabel = if ($primaryWindowAvailable -and $primaryMinutes -gt 0 -and ($primaryMinutes % 60) -eq 0) { \"$([int]($primaryMinutes / 60))-hour\" } else { 'Short-term' }",
+              "    $weekUsed = ConvertTo-Percent (Get-ObjectPropertyValue $secondary @('used_percent','usedPercent') 0)",
+          ])
+          win = replace_once(win, old, new, 'Windows parser block')
+
+          old = "\n".join([
+              '        FiveUsed = $fiveUsed',
+              '        FiveRemaining = 100 - $fiveUsed',
+              "        FiveReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $primary @('reset_at','resetAt') 0)",
+          ])
+          new = "\n".join([
+              '        PrimaryWindowAvailable = $primaryWindowAvailable',
+              '        PrimaryWindowLabel = $primaryWindowLabel',
+              '        FiveUsed = $fiveUsed',
+              '        FiveRemaining = 100 - $fiveUsed',
+              '        FiveReset = $fiveReset',
+          ])
+          win = replace_once(win, old, new, 'Windows state block')
+
+          old = "    $lines.Add(('5-hour     {0,3}% {1}   {2,3}%       {3,-36} {4}' -f $State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))"
+          new = "\n".join([
+              '    if ($State.PrimaryWindowAvailable) {',
+              "        $lines.Add(('{0,-11} {1,3}% {2}   {3,3}%       {4,-36} {5}' -f $State.PrimaryWindowLabel,$State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))",
+              '    } else {',
+              "        $lines.Add(('Short-term  {0,-50} {1,-36} {2}' -f 'Temporarily not enforced','No reset scheduled','-'))",
+              '    }',
+          ])
+          win = replace_once(win, old, new, 'Windows rendering line')
+
+          old = "\n".join([
+              '    if (-not $AutoResume) { return }',
+              '    if ($State.FiveReset -le 0 -or $Script:ResumeStartedForReset -eq $State.FiveReset) { return }',
+              '    if (-not $State.Allowed -or $State.LimitReached) { return }',
+          ])
+          new = "\n".join([
+              '    if (-not $AutoResume) { return }',
+              '    if (-not $State.Allowed -or $State.LimitReached) { return }',
+          ])
+          win = replace_once(win, old, new, 'Windows auto-resume guard')
+          win = win.replace('        $Script:ResumeStartedForReset = $State.FiveReset\n', '')
+
+          old = "\n".join([
+              '                $Script:LastGoodState = Get-CodexState -Auth $auth',
+              '                $Script:LastRefreshError = $null',
+              '                $lastApiRefresh = Get-Date',
+              '                Start-CodexResume -State $Script:LastGoodState',
+          ])
+          new = "\n".join([
+              '                $Script:LastGoodState = Get-CodexState -Auth $auth',
+              '                $Script:LastRefreshError = $null',
+              '                $lastApiRefresh = Get-Date',
+              '                $blocked = (-not $Script:LastGoodState.Allowed -or $Script:LastGoodState.LimitReached)',
+              '                if ($blocked) {',
+              '                    $Script:WasBlocked = $true',
+              "                    $Script:ResumeStatus = 'Waiting for Codex access to reset'",
+              '                } elseif ($Script:WasBlocked) {',
+              '                    $Script:WasBlocked = $false',
+              '                    Start-CodexResume -State $Script:LastGoodState',
+              "                } elseif ($AutoResume -and $Script:ResumeStatus -ne 'Started') {",
+              "                    $Script:ResumeStatus = 'Armed'",
+              '                }',
+          ])
+          win = replace_once(win, old, new, 'Windows access transition block')
           win_path.write_text(win)
 
-          Path('.github/workflows/bootstrap-adaptive-window-fix.yml').unlink(missing_ok=True)
-          Path('.github/workflows/apply-adaptive-window-fix.yml').unlink(missing_ok=True)
-
-      - name: Validate and commit
+      - name: Validate changes
         shell: bash
         run: |
           bash -n macOS/codex-usage-dashboard-v2.2.sh
@@ -158,10 +196,12 @@ jobs:
           grep -q 'Temporarily not enforced' macOS/codex-usage-dashboard-v2.2.sh
           grep -q 'Temporarily not enforced' Windows/CodexDashboard.ps1
           grep -q 'WasBlocked' Windows/CodexDashboard.ps1
-          if grep -q 'ResumeStartedForReset' Windows/CodexDashboard.ps1; then
-            echo 'Obsolete Windows resume key remains' >&2
-            exit 1
-          fi
+
+      - name: Commit changes
+        shell: bash
+        run: |
+          rm -f .github/workflows/bootstrap-adaptive-window-fix.yml
+          rm -f .github/workflows/apply-adaptive-window-fix.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
