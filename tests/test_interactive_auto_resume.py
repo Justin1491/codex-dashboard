@@ -30,12 +30,15 @@ def _read_until(fd: int, needle: bytes, timeout: float = 3.0) -> bytes:
 
 def test_macos_launcher_injects_interactive_auto_resume():
     text = (ROOT / "macOS" / "codex-usage-dashboard.sh").read_text()
-    assert 'VERSION="2.5.2"' in text
+    assert 'VERSION="2.5.4"' in text
     assert '_codex_configure_auto_resume()' in text
     assert '_codex_poll_interactive_key()' in text
     assert '_codex_enable_key_mode()' in text
     assert '_codex_restore_tty_mode()' in text
-    assert 'stty -icanon min 0 time 0 -echo' in text
+    assert '_codex_start_key_listener()' in text
+    assert '_codex_stop_key_listener()' in text
+    assert 'my $read = sysread($tty, $key, 1);' in text
+    assert 'stty -icanon min 1 time 0 -echo' in text
     assert 'Press A to configure auto-resume | Control+C to exit.' in text
     assert 'Project directory not found:' in text
     assert 'AUTO_RESUME=true' in text
@@ -123,14 +126,14 @@ declare -f main_loop_fixture
             capture_output=True,
             check=True,
         )
-        assert "version=2.5.2" in result.stdout
+        assert "version=2.5.4" in result.stdout
         assert "_codex_configure_auto_resume" in result.stdout
         assert f"resolved={tmp_path / 'project'}" in result.stdout
         assert "Press A to configure auto-resume" in result.stdout
         assert "_codex_poll_interactive_key" in result.stdout
 
 
-def test_macos_single_a_opens_configuration_and_restores_line_mode():
+def test_macos_background_listener_keeps_loop_alive_and_opens_configuration():
     launcher = ROOT / "macOS" / "codex-usage-dashboard.sh"
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -138,12 +141,14 @@ def test_macos_single_a_opens_configuration_and_restores_line_mode():
         core = tmp_path / "codex-usage-dashboard-core.sh"
         core.write_text(
             '''#!/bin/bash
+set -uo pipefail
 VERSION="2.3.0"
 DIM=''
 RESET=''
 FOOTER_HELP_ROW=1
 AUTO_RESUME=false
 RESUME_PROJECT="$PWD"
+RESUME_PROMPT='continue'
 ALT_SCREEN_ACTIVE=false
 CREDIT_COUNT=0
 TERM_COLS=120
@@ -164,18 +169,29 @@ write_footer_fields() {
   write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press Control + C to exit.${RESET}"
 }
 cleanup() {
-  if [[ "${CLEANED_UP:-false}" == 'true' ]]; then
-    return
-  fi
+  if [[ "${CLEANED_UP:-false}" == 'true' ]]; then return; fi
   CLEANED_UP=true
 }
 trap 'cleanup' EXIT
 trap 'exit 0' INT TERM HUP
 main() {
+  if [[ "$LIMIT_REACHED" == 'true' || "$ALLOWED" != 'true' ]]; then
+    WAS_BLOCKED=true
+    RESUME_STATUS='Waiting for Codex access to reset'
+  else
+    RESUME_STATUS='Codex is available'
+  fi
   enter_dashboard_screen
   ALT_SCREEN_ACTIVE=true
   draw_dashboard
   while true; do
+    if [[ "$LIMIT_REACHED" == 'true' || "$ALLOWED" != 'true' ]]; then
+      WAS_BLOCKED=true
+      RESUME_STATUS='Waiting for Codex access to reset'
+    else
+      RESUME_STATUS='Codex is available'
+    fi
+    printf 'TICK\\n'
     sleep 0.2
   done
 }
@@ -195,6 +211,12 @@ main
             dashboard_attrs = termios.tcgetattr(fd)
             assert not dashboard_attrs[3] & termios.ICANON
             assert not dashboard_attrs[3] & termios.ECHO
+
+            _read_until(fd, b"TICK")
+            time.sleep(0.8)
+            readable, _, _ = select.select([fd], [], [], 0.2)
+            idle_output = os.read(fd, 4096) if readable else b""
+            assert idle_output.count(b"TICK") >= 2
 
             os.write(fd, b"A")
             output = _read_until(fd, b"Project folder")

@@ -139,7 +139,7 @@ export -f curl _codex_epoch _codex_load_cache _codex_save_cache _codex_cache_kin
 # The stable core remains untouched; this launcher injects the small UI overlay.
 _codex_transform_core() {
   local old_version='VERSION="2.3.0"'
-  local new_version='VERSION="2.5.3"'
+  local new_version='VERSION="2.5.4"'
   local old_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press Control + C to exit.${RESET}"'
   local new_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press A to configure auto-resume | Control+C to exit.${RESET}"'
   local insert_before='cleanup() {'
@@ -152,11 +152,52 @@ _codex_transform_core() {
   local screen_start_old=$'  enter_dashboard_screen\n  ALT_SCREEN_ACTIVE=true\n  draw_dashboard'
   local screen_start_new=$'  enter_dashboard_screen\n  ALT_SCREEN_ACTIVE=true\n  _codex_enable_key_mode\n  draw_dashboard'
   local cleanup_old='cleanup() {'
-  local cleanup_new=$'cleanup() {\n  _codex_restore_tty_mode'
+  local cleanup_new=$'cleanup() {\n  _codex_stop_key_listener\n  _codex_restore_tty_mode'
   local interactive_overlay
 
   IFS= read -r -d '' interactive_overlay <<'EOF_OVERLAY' || true
 CODEX_TTY_STATE=''
+CODEX_KEY_LISTENER_PID=''
+CODEX_KEY_FILE=''
+
+_codex_stop_key_listener() {
+  if [[ -n "${CODEX_KEY_LISTENER_PID:-}" ]]; then
+    if kill -0 "$CODEX_KEY_LISTENER_PID" 2>/dev/null; then
+      kill "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+    fi
+    wait "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+  fi
+
+  CODEX_KEY_LISTENER_PID=''
+  if [[ -n "${CODEX_KEY_FILE:-}" ]]; then
+    rm -f "$CODEX_KEY_FILE" "${CODEX_KEY_FILE}.tmp" 2>/dev/null || true
+  fi
+  CODEX_KEY_FILE=''
+}
+
+_codex_start_key_listener() {
+  _codex_stop_key_listener
+  [[ -n "${CODEX_TTY_STATE:-}" ]] || return 0
+
+  CODEX_KEY_FILE="${TMPDIR:-/tmp}/codex-dashboard-key-$$"
+  : >"$CODEX_KEY_FILE"
+
+  perl -e '
+    use strict;
+    use warnings;
+    my ($path) = @ARGV;
+    open my $tty, "<", "/dev/tty" or exit 1;
+    binmode $tty;
+    my $key = "";
+    my $read = sysread($tty, $key, 1);
+    exit 0 unless defined($read) && $read == 1;
+    open my $out, ">", "$path.tmp" or exit 1;
+    print {$out} $key;
+    close $out;
+    rename "$path.tmp", $path or exit 1;
+  ' "$CODEX_KEY_FILE" &
+  CODEX_KEY_LISTENER_PID=$!
+}
 
 _codex_enable_key_mode() {
   local state=''
@@ -167,7 +208,8 @@ _codex_enable_key_mode() {
   fi
 
   [[ -n "${CODEX_TTY_STATE:-}" ]] || return 0
-  stty -icanon min 0 time 0 -echo </dev/tty 2>/dev/null || true
+  stty -icanon min 1 time 0 -echo </dev/tty 2>/dev/null || true
+  _codex_start_key_listener
 }
 
 _codex_restore_tty_mode() {
@@ -206,6 +248,7 @@ _codex_resolve_project_path() {
 _codex_configure_auto_resume() {
   local action='' project_input='' candidate='' confirm=''
 
+  _codex_stop_key_listener
   _codex_restore_tty_mode
   if [[ "${ALT_SCREEN_ACTIVE:-false}" == 'true' ]]; then
     leave_dashboard_screen
@@ -280,14 +323,22 @@ _codex_configure_auto_resume() {
 _codex_poll_interactive_key() {
   local key=''
 
-  # Bash 3.2 supports a zero-second readiness test. It does not consume input.
-  if IFS= read -r -t 0 </dev/tty 2>/dev/null; then
-    if IFS= read -r -s -n 1 key </dev/tty 2>/dev/null; then
-      case "$key" in
-        a|A) _codex_configure_auto_resume ;;
-      esac
-    fi
+  [[ -n "${CODEX_KEY_FILE:-}" && -s "$CODEX_KEY_FILE" ]] || return 0
+  key="$(cat "$CODEX_KEY_FILE" 2>/dev/null || true)"
+
+  if [[ -n "${CODEX_KEY_LISTENER_PID:-}" ]]; then
+    wait "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+    CODEX_KEY_LISTENER_PID=''
   fi
+
+  case "$key" in
+    a|A)
+      _codex_configure_auto_resume
+      ;;
+    *)
+      _codex_start_key_listener
+      ;;
+  esac
 }
 
 EOF_OVERLAY
@@ -321,12 +372,14 @@ EOF_OVERLAY
     s/\Q$ENV{CODEX_CORE_CLEANUP_OLD}\E/$ENV{CODEX_CORE_CLEANUP_NEW}/ge;
   ' "$CORE_SCRIPT")" || return 1
 
-  grep -Fq 'VERSION="2.5.3"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
+  grep -Fq 'VERSION="2.5.4"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_configure_auto_resume()' <<<"$transformed" || { printf 'Error: interactive auto-resume overlay failed.\n' >&2; return 1; }
   grep -Fq 'Press A to configure auto-resume' <<<"$transformed" || { printf 'Error: interactive dashboard help overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_poll_interactive_key' <<<"$transformed" || { printf 'Error: interactive key handler overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_enable_key_mode' <<<"$transformed" || { printf 'Error: interactive terminal mode overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_restore_tty_mode' <<<"$transformed" || { printf 'Error: terminal restoration overlay failed.\n' >&2; return 1; }
+  grep -Fq '_codex_start_key_listener' <<<"$transformed" || { printf 'Error: background key listener overlay failed.\n' >&2; return 1; }
+  grep -Fq '_codex_stop_key_listener' <<<"$transformed" || { printf 'Error: key listener cleanup overlay failed.\n' >&2; return 1; }
 
   printf '%s\n' "$transformed"
 }
