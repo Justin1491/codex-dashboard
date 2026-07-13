@@ -37,7 +37,7 @@ def test_macos_launcher_injects_interactive_auto_resume():
     assert '_codex_restore_tty_mode()' in text
     assert '_codex_start_key_listener()' in text
     assert '_codex_stop_key_listener()' in text
-    assert 'dd bs=1 count=1' in text
+    assert 'my $read = sysread($tty, $key, 1);' in text
     assert 'stty -icanon min 1 time 0 -echo' in text
     assert 'Press A to configure auto-resume | Control+C to exit.' in text
     assert 'Project directory not found:' in text
