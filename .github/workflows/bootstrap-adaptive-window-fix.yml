@@ -1,0 +1,44 @@
+name: Bootstrap adaptive usage window fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-adaptive-window-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Execute stored patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import textwrap
+
+          source = Path('.github/workflows/apply-adaptive-window-fix.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(source) if line.strip() == 'run: |') + 1
+          block = []
+          for line in source[start:]:
+              if line.startswith('      - name:'):
+                  break
+              block.append(line[10:] if line.startswith('          ') else line)
+          exec('\n'.join(block), {'__name__': '__main__'})
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          bash -n codex-usage-dashboard-v2.2.sh
+          rm -f .github/workflows/bootstrap-adaptive-window-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Support temporarily disabled short-term usage windows"
+          git push
