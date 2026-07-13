@@ -66,9 +66,7 @@ The resumed command is equivalent to:
 codex exec resume --last "<continuation prompt>"
 ```
 
-The resumed process runs inside the selected project directory.
-
-Auto-resume is disabled by default and must be explicitly enabled.
+The resumed process runs inside the selected project directory. Auto-resume is disabled by default and must be explicitly enabled.
 
 ### Terminal Experience
 
@@ -129,16 +127,23 @@ cd codex-dashboard
 
 ## Running on macOS
 
-Make the current macOS script executable:
+Open the macOS folder:
 
 ```bash
-chmod 700 codex-usage-dashboard-v*.sh
+cd macOS
 ```
 
-Run it:
+Launch the dashboard:
 
 ```bash
-./codex-usage-dashboard-v*.sh
+./codex-usage-dashboard.sh
+```
+
+The executable permission should be preserved when the repository is cloned. If macOS reports `Permission denied`, run:
+
+```bash
+chmod +x codex-usage-dashboard.sh
+./codex-usage-dashboard.sh
 ```
 
 Press **Control + C** to exit.
@@ -148,7 +153,7 @@ Press **Control + C** to exit.
 Start the dashboard with auto-resume enabled:
 
 ```bash
-./codex-usage-dashboard-v*.sh \
+./codex-usage-dashboard.sh \
   --auto-resume \
   --project ~/Developer/MyProject
 ```
@@ -156,11 +161,13 @@ Start the dashboard with auto-resume enabled:
 Use a custom continuation prompt:
 
 ```bash
-./codex-usage-dashboard-v*.sh \
+./codex-usage-dashboard.sh \
   --auto-resume \
   --project ~/Developer/MyProject \
   --prompt "Review the repository and continue the current implementation plan from the last safe point. Do not repeat completed work."
 ```
+
+While the dashboard is running, press **A** to configure auto-resume interactively.
 
 ## Running on Windows
 
@@ -203,13 +210,7 @@ Use a custom continuation prompt:
   -Prompt "Review the repository and continue the current implementation plan from the last safe point. Do not repeat completed work."
 ```
 
-The Windows dashboard also supports interactive auto-resume configuration. While the dashboard is running, press:
-
-```text
-A
-```
-
-From there you can select or change the project folder and enable or disable auto-resume.
+While the dashboard is running, press **A** to configure auto-resume interactively. From there you can select or change the project folder and enable or disable auto-resume.
 
 ## Command-Line Options
 
@@ -222,14 +223,14 @@ The macOS and Windows launchers support equivalent options using each platform's
 | Change API refresh interval | `--refresh SECONDS` | `-Refresh SECONDS` |
 | Set continuation prompt | `--prompt TEXT` | `-Prompt TEXT` |
 | Show help | `--help` | `-Help` |
-| Show version | varies by launcher | `-Version` |
+| Show version | `--version` | `-Version` |
 
 The default API refresh interval is 60 seconds.
 
 Example using a 30-second refresh interval:
 
 ```bash
-./codex-usage-dashboard-v*.sh --refresh 30
+./codex-usage-dashboard.sh --refresh 30
 ```
 
 ```powershell
@@ -302,7 +303,7 @@ macOS:
 
 ```bash
 export CODEX_HOME="$HOME/.custom-codex"
-./codex-usage-dashboard-v*.sh
+./codex-usage-dashboard.sh
 ```
 
 Windows:
@@ -376,11 +377,13 @@ auth.json
 
 ## Updating
 
-Pull the latest version:
+Pull the latest version on macOS:
 
 ```bash
 cd ~/Developer/codex-dashboard
 git pull
+cd macOS
+./codex-usage-dashboard.sh
 ```
 
 On Windows:
@@ -388,6 +391,8 @@ On Windows:
 ```powershell
 cd C:\Developer\codex-dashboard
 git pull
+cd Windows
+.\CodexDashboard.ps1
 ```
 
 ## Troubleshooting
@@ -418,8 +423,11 @@ brew install jq
 
 ### Permission denied on macOS
 
+From the `macOS` folder, run:
+
 ```bash
-chmod 700 codex-usage-dashboard-v*.sh
+chmod +x codex-usage-dashboard.sh
+./codex-usage-dashboard.sh
 ```
 
 ### PowerShell blocks the script
