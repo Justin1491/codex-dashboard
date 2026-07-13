@@ -139,7 +139,7 @@ export -f curl _codex_epoch _codex_load_cache _codex_save_cache _codex_cache_kin
 # The stable core remains untouched; this launcher injects the small UI overlay.
 _codex_transform_core() {
   local old_version='VERSION="2.3.0"'
-  local new_version='VERSION="2.5.0"'
+  local new_version='VERSION="2.5.1"'
   local old_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press Control + C to exit.${RESET}"'
   local new_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press A to configure auto-resume | Control+C to exit.${RESET}"'
   local insert_before='cleanup() {'
@@ -149,12 +149,36 @@ _codex_transform_core() {
   local loop_status_new=$'        else\n          if [[ "$AUTO_RESUME" == \'true\' ]]; then\n            RESUME_STATUS=\'Armed; waiting for Codex to become rate limited\'\n          else\n            RESUME_STATUS=\'Codex is available\'\n          fi\n        fi'
   local loop_marker='    sleep 0.2'
   local loop_replacement=$'    _codex_poll_interactive_key\n\n    sleep 0.2'
+  local screen_start_old=$'  enter_dashboard_screen\n  ALT_SCREEN_ACTIVE=true\n  draw_dashboard'
+  local screen_start_new=$'  enter_dashboard_screen\n  ALT_SCREEN_ACTIVE=true\n  _codex_enable_key_mode\n  draw_dashboard'
+  local cleanup_old='cleanup() {'
+  local cleanup_new=$'cleanup() {\n  _codex_restore_tty_mode'
   local interactive_overlay
 
   IFS= read -r -d '' interactive_overlay <<'EOF_OVERLAY' || true
+CODEX_TTY_STATE=''
+
+_codex_enable_key_mode() {
+  local state=''
+
+  if [[ -z "${CODEX_TTY_STATE:-}" ]]; then
+    state="$(stty -g </dev/tty 2>/dev/null || true)"
+    [[ -n "$state" ]] && CODEX_TTY_STATE="$state"
+  fi
+
+  [[ -n "${CODEX_TTY_STATE:-}" ]] || return 0
+  stty -icanon min 0 time 0 -echo </dev/tty 2>/dev/null || true
+}
+
+_codex_restore_tty_mode() {
+  [[ -n "${CODEX_TTY_STATE:-}" ]] || return 0
+  stty "$CODEX_TTY_STATE" </dev/tty 2>/dev/null || true
+}
+
 _codex_restore_dashboard_after_prompt() {
   enter_dashboard_screen
   ALT_SCREEN_ACTIVE=true
+  _codex_enable_key_mode
   read_terminal_size
   calculate_layout "$TERM_COLS" "$TERM_ROWS" "$CREDIT_COUNT"
   draw_dashboard
@@ -182,6 +206,7 @@ _codex_resolve_project_path() {
 _codex_configure_auto_resume() {
   local action='' project_input='' candidate='' confirm=''
 
+  _codex_restore_tty_mode
   if [[ "${ALT_SCREEN_ACTIVE:-false}" == 'true' ]]; then
     leave_dashboard_screen
     ALT_SCREEN_ACTIVE=false
@@ -276,6 +301,10 @@ EOF_OVERLAY
   export CODEX_CORE_LOOP_STATUS_NEW="$loop_status_new"
   export CODEX_CORE_LOOP_MARKER="$loop_marker"
   export CODEX_CORE_LOOP_REPLACEMENT="$loop_replacement"
+  export CODEX_CORE_SCREEN_START_OLD="$screen_start_old"
+  export CODEX_CORE_SCREEN_START_NEW="$screen_start_new"
+  export CODEX_CORE_CLEANUP_OLD="$cleanup_old"
+  export CODEX_CORE_CLEANUP_NEW="$cleanup_new"
 
   local transformed
   transformed="$(LC_ALL=C perl -0pe '
@@ -285,12 +314,16 @@ EOF_OVERLAY
     s/\Q$ENV{CODEX_CORE_STARTUP_STATUS_OLD}\E/$ENV{CODEX_CORE_STARTUP_STATUS_NEW}/ge;
     s/\Q$ENV{CODEX_CORE_LOOP_STATUS_OLD}\E/$ENV{CODEX_CORE_LOOP_STATUS_NEW}/ge;
     s/\Q$ENV{CODEX_CORE_LOOP_MARKER}\E/$ENV{CODEX_CORE_LOOP_REPLACEMENT}/ge;
+    s/\Q$ENV{CODEX_CORE_SCREEN_START_OLD}\E/$ENV{CODEX_CORE_SCREEN_START_NEW}/ge;
+    s/\Q$ENV{CODEX_CORE_CLEANUP_OLD}\E/$ENV{CODEX_CORE_CLEANUP_NEW}/ge;
   ' "$CORE_SCRIPT")" || return 1
 
-  grep -Fq 'VERSION="2.5.0"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
+  grep -Fq 'VERSION="2.5.1"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_configure_auto_resume()' <<<"$transformed" || { printf 'Error: interactive auto-resume overlay failed.\n' >&2; return 1; }
   grep -Fq 'Press A to configure auto-resume' <<<"$transformed" || { printf 'Error: interactive dashboard help overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_poll_interactive_key' <<<"$transformed" || { printf 'Error: interactive key handler overlay failed.\n' >&2; return 1; }
+  grep -Fq '_codex_enable_key_mode' <<<"$transformed" || { printf 'Error: interactive terminal mode overlay failed.\n' >&2; return 1; }
+  grep -Fq '_codex_restore_tty_mode' <<<"$transformed" || { printf 'Error: terminal restoration overlay failed.\n' >&2; return 1; }
 
   printf '%s\n' "$transformed"
 }
