@@ -30,7 +30,7 @@ def _read_until(fd: int, needle: bytes, timeout: float = 3.0) -> bytes:
 
 def test_macos_launcher_injects_interactive_auto_resume():
     text = (ROOT / "macOS" / "codex-usage-dashboard.sh").read_text()
-    assert 'VERSION="2.5.1"' in text
+    assert 'VERSION="2.5.2"' in text
     assert '_codex_configure_auto_resume()' in text
     assert '_codex_poll_interactive_key()' in text
     assert '_codex_enable_key_mode()' in text
@@ -123,7 +123,7 @@ declare -f main_loop_fixture
             capture_output=True,
             check=True,
         )
-        assert "version=2.5.1" in result.stdout
+        assert "version=2.5.2" in result.stdout
         assert "_codex_configure_auto_resume" in result.stdout
         assert f"resolved={tmp_path / 'project'}" in result.stdout
         assert "Press A to configure auto-resume" in result.stdout
@@ -188,7 +188,7 @@ main
             os.execve(
                 "/bin/bash",
                 ["bash", str(tmp_path / launcher.name)],
-                {**os.environ, "HOME": str(tmp_path)},
+                {**os.environ, "HOME": str(tmp_path), "BASH_COMPAT": "3.2"},
             )
         try:
             _read_until(fd, b"DASHBOARD READY")

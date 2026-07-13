@@ -139,7 +139,7 @@ export -f curl _codex_epoch _codex_load_cache _codex_save_cache _codex_cache_kin
 # The stable core remains untouched; this launcher injects the small UI overlay.
 _codex_transform_core() {
   local old_version='VERSION="2.3.0"'
-  local new_version='VERSION="2.5.1"'
+  local new_version='VERSION="2.5.2"'
   local old_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press Control + C to exit.${RESET}"'
   local new_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press A to configure auto-resume | Control+C to exit.${RESET}"'
   local insert_before='cleanup() {'
@@ -280,7 +280,7 @@ _codex_configure_auto_resume() {
 _codex_poll_interactive_key() {
   local key=''
 
-  if IFS= read -r -s -n 1 -t 0.05 key </dev/tty 2>/dev/null; then
+  if IFS= read -r -s -n 1 key </dev/tty 2>/dev/null; then
     case "$key" in
       a|A) _codex_configure_auto_resume ;;
     esac
@@ -318,7 +318,7 @@ EOF_OVERLAY
     s/\Q$ENV{CODEX_CORE_CLEANUP_OLD}\E/$ENV{CODEX_CORE_CLEANUP_NEW}/ge;
   ' "$CORE_SCRIPT")" || return 1
 
-  grep -Fq 'VERSION="2.5.1"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
+  grep -Fq 'VERSION="2.5.2"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_configure_auto_resume()' <<<"$transformed" || { printf 'Error: interactive auto-resume overlay failed.\n' >&2; return 1; }
   grep -Fq 'Press A to configure auto-resume' <<<"$transformed" || { printf 'Error: interactive dashboard help overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_poll_interactive_key' <<<"$transformed" || { printf 'Error: interactive key handler overlay failed.\n' >&2; return 1; }
