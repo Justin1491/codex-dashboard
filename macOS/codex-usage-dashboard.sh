@@ -167,8 +167,7 @@ _codex_enable_key_mode() {
   fi
 
   [[ -n "${CODEX_TTY_STATE:-}" ]] || return 0
-  # VMIN=0 and VTIME=1 make each poll return after at most 0.1 seconds.
-  stty -icanon min 0 time 1 -echo </dev/tty 2>/dev/null || true
+  stty -icanon min 0 time 0 -echo </dev/tty 2>/dev/null || true
 }
 
 _codex_restore_tty_mode() {
@@ -281,10 +280,13 @@ _codex_configure_auto_resume() {
 _codex_poll_interactive_key() {
   local key=''
 
-  if IFS= read -r -s -n 1 key </dev/tty 2>/dev/null; then
-    case "$key" in
-      a|A) _codex_configure_auto_resume ;;
-    esac
+  # Bash 3.2 supports a zero-second readiness test. It does not consume input.
+  if IFS= read -r -t 0 </dev/tty 2>/dev/null; then
+    if IFS= read -r -s -n 1 key </dev/tty 2>/dev/null; then
+      case "$key" in
+        a|A) _codex_configure_auto_resume ;;
+      esac
+    fi
   fi
 }
 
