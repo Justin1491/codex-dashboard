@@ -4,7 +4,7 @@
 # handled explicitly so resizing the Terminal window cannot terminate the app.
 set -uo pipefail
 
-VERSION="2.2.0"
+VERSION="2.3.0"
 
 AUTH_PATH="${CODEX_HOME:-$HOME/.codex}/auth.json"
 USAGE_ENDPOINT="${CODEX_USAGE_ENDPOINT:-https://chatgpt.com/backend-api/wham/usage}"
@@ -54,7 +54,7 @@ Usage:
 
 Options:
   --auto-resume          Resume the most recent non-interactive Codex session
-                         after the five-hour limit resets.
+                         after Codex access becomes available again.
   --project PATH         Project directory used for resume --last.
                          Default: current directory.
   --refresh SECONDS      API refresh interval. Default: 60.
@@ -370,8 +370,16 @@ parse_api_data() {
   ALLOWED="$(jq -r '.rate_limit.allowed // false' <<<"$USAGE_JSON")"
   LIMIT_REACHED="$(jq -r '.rate_limit.limit_reached // false' <<<"$USAGE_JSON")"
 
-  FIVE_USED="$(jq -r '.rate_limit.primary_window.used_percent // 0' <<<"$USAGE_JSON")"
-  FIVE_RESET="$(jq -r '.rate_limit.primary_window.reset_at // 0' <<<"$USAGE_JSON")"
+  PRIMARY_WINDOW_AVAILABLE="$(jq -r '(.rate_limit.primary_window? != null) and ((.rate_limit.primary_window.reset_at? // 0) > 0)' <<<"$USAGE_JSON")"
+  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
+    FIVE_USED="$(jq -r '.rate_limit.primary_window.used_percent // 0' <<<"$USAGE_JSON")"
+    FIVE_RESET="$(jq -r '.rate_limit.primary_window.reset_at // 0' <<<"$USAGE_JSON")"
+    PRIMARY_WINDOW_LABEL="$(jq -r '(.rate_limit.primary_window.window_minutes? // 300) as $m | if ($m % 60) == 0 then "\($m / 60 | floor)-hour" else "Short-term" end' <<<"$USAGE_JSON")"
+  else
+    FIVE_USED=0
+    FIVE_RESET=0
+    PRIMARY_WINDOW_LABEL='Short-term'
+  fi
   WEEK_USED="$(jq -r '.rate_limit.secondary_window.used_percent // 0' <<<"$USAGE_JSON")"
   WEEK_RESET="$(jq -r '.rate_limit.secondary_window.reset_at // 0' <<<"$USAGE_JSON")"
 
@@ -602,8 +610,10 @@ update_all_countdowns() {
 
   [[ "$DISPLAY_MODE" == 'DASHBOARD' ]] || return
 
-  update_one_countdown \
-    "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "$FIVE_RESET" 'PREV_USAGE' 0
+  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
+    update_one_countdown \
+      "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "$FIVE_RESET" 'PREV_USAGE' 0
+  fi
 
   update_one_countdown \
     "$USAGE_ROW_WEEKLY" "$USAGE_COUNTDOWN_REL_COL" "$WEEK_RESET" 'PREV_USAGE' 1
@@ -668,9 +678,17 @@ write_usage_static_fields() {
   clear_rel_field "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" 28
   clear_rel_field "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" 8
   clear_rel_field "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" 31
-  write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${GREEN}${five_remaining_text}${RESET}"
-  write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "$(printf '%3d%%' "$FIVE_USED")"
-  write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "$(epoch_local "$FIVE_RESET")"
+  clear_rel_field "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" 18
+  if [[ "$PRIMARY_WINDOW_AVAILABLE" == 'true' ]]; then
+    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${GREEN}${five_remaining_text}${RESET}"
+    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "$(printf '%3d%%' "$FIVE_USED")"
+    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "$(epoch_local "$FIVE_RESET")"
+  else
+    write_rel "$USAGE_ROW_5H" "$USAGE_REMAINING_REL_COL" "${DIM}Temporarily not enforced${RESET}"
+    write_rel "$USAGE_ROW_5H" "$USAGE_USED_REL_COL" "${DIM}—${RESET}"
+    write_rel "$USAGE_ROW_5H" "$USAGE_RESETS_REL_COL" "${DIM}No reset scheduled${RESET}"
+    write_rel "$USAGE_ROW_5H" "$USAGE_COUNTDOWN_REL_COL" "${DIM}—${RESET}"
+  fi
 
   clear_rel_field "$USAGE_ROW_WEEKLY" "$USAGE_REMAINING_REL_COL" 28
   clear_rel_field "$USAGE_ROW_WEEKLY" "$USAGE_USED_REL_COL" 8
@@ -748,7 +766,7 @@ draw_dashboard() {
   write_rel 10 "$USAGE_COUNTDOWN_REL_COL" "${BOLD}TIME TO RESET${RESET}"
   draw_separator 11
 
-  write_rel "$USAGE_ROW_5H" "$USAGE_WINDOW_REL_COL" '5-hour'
+  write_rel "$USAGE_ROW_5H" "$USAGE_WINDOW_REL_COL" "$PRIMARY_WINDOW_LABEL"
   write_rel "$USAGE_ROW_WEEKLY" "$USAGE_WINDOW_REL_COL" 'Weekly'
   write_usage_static_fields
 
@@ -903,7 +921,7 @@ main() {
 
   if [[ "$LIMIT_REACHED" == 'true' || "$ALLOWED" != 'true' ]]; then
     WAS_BLOCKED=true
-    RESUME_STATUS='Waiting for five-hour limit reset'
+    RESUME_STATUS='Waiting for Codex access to reset'
   else
     RESUME_STATUS='Codex is available'
   fi
@@ -941,7 +959,7 @@ main() {
 
         if [[ "$LIMIT_REACHED" == 'true' || "$ALLOWED" != 'true' ]]; then
           WAS_BLOCKED=true
-          RESUME_STATUS='Waiting for five-hour limit reset'
+          RESUME_STATUS='Waiting for Codex access to reset'
         elif [[ "$WAS_BLOCKED" == 'true' &&
                 "$AUTO_RESUME" == 'true' &&
                 "$AUTO_RESUME_TRIGGERED" == 'false' ]]; then

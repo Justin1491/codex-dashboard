@@ -11,7 +11,7 @@ param(
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = 'Stop'
 
-$Script:AppVersion = '2.2.0'
+$Script:AppVersion = '2.3.0'
 $Script:UsageEndpoint = if ($env:CODEX_USAGE_ENDPOINT) { $env:CODEX_USAGE_ENDPOINT } else { 'https://chatgpt.com/backend-api/wham/usage' }
 $Script:CreditsEndpoint = if ($env:CODEX_CREDITS_ENDPOINT) { $env:CODEX_CREDITS_ENDPOINT } else { 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits' }
 $Script:CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
@@ -22,7 +22,7 @@ $Script:LastWidth = 120
 $Script:LastHeight = 30
 $Script:LastGoodState = $null
 $Script:LastRefreshError = $null
-$Script:ResumeStartedForReset = 0
+$Script:WasBlocked = $false
 $Script:ResumeStatus = if ($AutoResume) { 'Armed' } else { 'Disabled' }
 $Script:ResumeLog = $null
 $Script:OriginalCursorVisible = $true
@@ -36,7 +36,7 @@ Usage:
 
 Options:
   -AutoResume          Resume the most recent non-interactive Codex session
-                       after the five-hour limit resets.
+                       after Codex access becomes available again.
   -Project PATH        Project directory used for resume --last.
                        Default: current directory.
   -Refresh SECONDS     API refresh interval. Default: 60.
@@ -123,7 +123,11 @@ function Normalize-CodexState {
     $primary = Get-ObjectPropertyValue $rateLimit @('primary_window','primaryWindow')
     $secondary = Get-ObjectPropertyValue $rateLimit @('secondary_window','secondaryWindow')
 
-    $fiveUsed = ConvertTo-Percent (Get-ObjectPropertyValue $primary @('used_percent','usedPercent') 0)
+    $fiveReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $primary @('reset_at','resetAt') 0)
+    $primaryWindowAvailable = ($null -ne $primary -and $fiveReset -gt 0)
+    $fiveUsed = if ($primaryWindowAvailable) { ConvertTo-Percent (Get-ObjectPropertyValue $primary @('used_percent','usedPercent') 0) } else { 0 }
+    $primaryMinutes = [int](Get-ObjectPropertyValue $primary @('window_minutes','windowMinutes') 300)
+    $primaryWindowLabel = if ($primaryWindowAvailable -and $primaryMinutes -gt 0 -and ($primaryMinutes % 60) -eq 0) { "$([int]($primaryMinutes / 60))-hour" } else { 'Short-term' }
     $weekUsed = ConvertTo-Percent (Get-ObjectPropertyValue $secondary @('used_percent','usedPercent') 0)
 
     $records = @()
@@ -145,9 +149,11 @@ function Normalize-CodexState {
         Plan = [string](Get-ObjectPropertyValue $Usage @('plan_type','planType') 'unknown')
         Allowed = [bool](Get-ObjectPropertyValue $rateLimit @('allowed') $false)
         LimitReached = [bool](Get-ObjectPropertyValue $rateLimit @('limit_reached','limitReached') $false)
+        PrimaryWindowAvailable = $primaryWindowAvailable
+        PrimaryWindowLabel = $primaryWindowLabel
         FiveUsed = $fiveUsed
         FiveRemaining = 100 - $fiveUsed
-        FiveReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $primary @('reset_at','resetAt') 0)
+        FiveReset = $fiveReset
         WeekUsed = $weekUsed
         WeekRemaining = 100 - $weekUsed
         WeekReset = ConvertTo-EpochSeconds (Get-ObjectPropertyValue $secondary @('reset_at','resetAt') 0)
@@ -236,7 +242,11 @@ function Render-Dashboard {
     $lines.Add('')
     $lines.Add('USAGE WINDOWS')
     $lines.Add(('Window      Remaining                    Used       Resets                               Countdown'))
-    $lines.Add(('5-hour     {0,3}% {1}   {2,3}%       {3,-36} {4}' -f $State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))
+    if ($State.PrimaryWindowAvailable) {
+        $lines.Add(('{0,-11} {1,3}% {2}   {3,3}%       {4,-36} {5}' -f $State.PrimaryWindowLabel,$State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))
+    } else {
+        $lines.Add(('Short-term  {0,-50} {1,-36} {2}' -f 'Temporarily not enforced','No reset scheduled','-'))
+    }
     $lines.Add(('Weekly     {0,3}% {1}   {2,3}%       {3,-36} {4}' -f $State.WeekRemaining,(New-AsciiBar $State.WeekRemaining),$State.WeekUsed,(Format-LocalTime $State.WeekReset),(Format-Countdown $State.WeekReset)))
     $lines.Add('')
     $lines.Add("RESET CREDITS  Available: $($State.AvailableCredits)")
@@ -266,7 +276,6 @@ function Render-Dashboard {
 function Start-CodexResume {
     param($State)
     if (-not $AutoResume) { return }
-    if ($State.FiveReset -le 0 -or $Script:ResumeStartedForReset -eq $State.FiveReset) { return }
     if (-not $State.Allowed -or $State.LimitReached) { return }
     if (-not (Test-Path -LiteralPath $Project -PathType Container)) { $Script:ResumeStatus = "Failed: project not found"; return }
     if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { $Script:ResumeStatus = 'Failed: codex command not found'; return }
@@ -279,7 +288,6 @@ function Start-CodexResume {
     $arguments = "exec resume --last `"$escapedPrompt`""
     try {
         Start-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $Project -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath -WindowStyle Hidden | Out-Null
-        $Script:ResumeStartedForReset = $State.FiveReset
         $Script:ResumeStatus = 'Started'
         $Script:ResumeLog = $logPath
     } catch {
@@ -306,7 +314,16 @@ try {
                 $Script:LastGoodState = Get-CodexState -Auth $auth
                 $Script:LastRefreshError = $null
                 $lastApiRefresh = Get-Date
-                Start-CodexResume -State $Script:LastGoodState
+                $blocked = (-not $Script:LastGoodState.Allowed -or $Script:LastGoodState.LimitReached)
+                if ($blocked) {
+                    $Script:WasBlocked = $true
+                    $Script:ResumeStatus = 'Waiting for Codex access to reset'
+                } elseif ($Script:WasBlocked) {
+                    $Script:WasBlocked = $false
+                    Start-CodexResume -State $Script:LastGoodState
+                } elseif ($AutoResume -and $Script:ResumeStatus -ne 'Started') {
+                    $Script:ResumeStatus = 'Armed'
+                }
             } catch {
                 $Script:LastRefreshError = $_.Exception.Message
                 if ($null -eq $Script:LastGoodState) { throw }
