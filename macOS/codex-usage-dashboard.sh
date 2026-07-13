@@ -161,8 +161,10 @@ CODEX_KEY_LISTENER_PID=''
 CODEX_KEY_FILE=''
 
 _codex_stop_key_listener() {
-  if [[ -n "${CODEX_KEY_LISTENER_PID:-}" ]] && kill -0 "$CODEX_KEY_LISTENER_PID" 2>/dev/null; then
-    kill "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+  if [[ -n "${CODEX_KEY_LISTENER_PID:-}" ]]; then
+    if kill -0 "$CODEX_KEY_LISTENER_PID" 2>/dev/null; then
+      kill "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+    fi
     wait "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
   fi
 
@@ -180,18 +182,20 @@ _codex_start_key_listener() {
   CODEX_KEY_FILE="${TMPDIR:-/tmp}/codex-dashboard-key-$$"
   : >"$CODEX_KEY_FILE"
 
-  (
-    local key=''
-    while true; do
-      key="$(dd bs=1 count=1 2>/dev/null </dev/tty)" || exit 0
-      [[ -n "$key" ]] || continue
-      printf '%s' "$key" >"${CODEX_KEY_FILE}.tmp"
-      mv -f "${CODEX_KEY_FILE}.tmp" "$CODEX_KEY_FILE"
-      while [[ -s "$CODEX_KEY_FILE" ]]; do
-        sleep 0.05
-      done
-    done
-  ) &
+  perl -e '
+    use strict;
+    use warnings;
+    my ($path) = @ARGV;
+    open my $tty, "<", "/dev/tty" or exit 1;
+    binmode $tty;
+    my $key = "";
+    my $read = sysread($tty, $key, 1);
+    exit 0 unless defined($read) && $read == 1;
+    open my $out, ">", "$path.tmp" or exit 1;
+    print {$out} $key;
+    close $out;
+    rename "$path.tmp", $path or exit 1;
+  ' "$CODEX_KEY_FILE" &
   CODEX_KEY_LISTENER_PID=$!
 }
 
@@ -321,10 +325,19 @@ _codex_poll_interactive_key() {
 
   [[ -n "${CODEX_KEY_FILE:-}" && -s "$CODEX_KEY_FILE" ]] || return 0
   key="$(cat "$CODEX_KEY_FILE" 2>/dev/null || true)"
-  : >"$CODEX_KEY_FILE"
+
+  if [[ -n "${CODEX_KEY_LISTENER_PID:-}" ]]; then
+    wait "$CODEX_KEY_LISTENER_PID" 2>/dev/null || true
+    CODEX_KEY_LISTENER_PID=''
+  fi
 
   case "$key" in
-    a|A) _codex_configure_auto_resume ;;
+    a|A)
+      _codex_configure_auto_resume
+      ;;
+    *)
+      _codex_start_key_listener
+      ;;
   esac
 }
 
