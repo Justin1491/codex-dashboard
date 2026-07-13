@@ -1,51 +1,111 @@
 # Codex Dashboard
 
-A live terminal dashboard for monitoring Codex usage limits, reset credits, and countdowns on macOS.
+A lightweight terminal dashboard for viewing your current OpenAI Codex usage limits, reset times, reset credits, and remaining availability on macOS and Windows.
 
-Codex Dashboard shows your current five-hour and weekly usage windows, converts reset times to your Mac’s local time zone, tracks individual reset-credit expirations, and can optionally resume the most recent non-interactive Codex task after a rate limit clears.
+Codex Dashboard is designed for people who use Codex heavily and want a clear answer to two questions:
 
-> **Current version:** 2.2.0  
-> **Platform:** macOS  
+1. **How much Codex usage do I have left?**
+2. **When will Codex be available again if I hit a limit?**
+
+It can also optionally **resume the most recent non-interactive Codex session automatically after the relevant usage limit resets**.
+
+> **Platforms:** macOS and Windows  
 > **Repository:** https://github.com/Justin1491/codex-dashboard
+
+## What the Dashboard Does
+
+Codex Dashboard reads your existing local Codex authentication and displays the usage information returned by OpenAI.
+
+Depending on what OpenAI currently provides for your account, the dashboard can show:
+
+- Short-term usage used and remaining
+- Weekly usage used and remaining
+- Local reset date and time
+- Live countdowns until each reset
+- Reset-credit availability
+- Individual reset-credit grant and expiration times
+- Automatic refresh of usage data
+- Optional automatic resume after a rate limit clears
+
+OpenAI occasionally changes which usage windows are returned. For example, the traditional five-hour window may be temporarily removed, replaced, or omitted. Codex Dashboard normalizes the available response and continues showing the windows that actually exist instead of assuming a five-hour window is always present.
+
+## What the Dashboard Does Not Do
+
+Codex Dashboard does **not** monitor active Codex tasks, inspect task progress, show completed jobs, or track individual agent activity.
+
+Its purpose is specifically to display Codex usage availability and optionally restart the most recent resumable Codex CLI session after a usage limit clears.
 
 ## Features
 
-- Five-hour usage used and remaining
-- Weekly usage used and remaining
-- Local reset date and time
-- Live countdowns in days, hours, minutes, and seconds
-- Available reset-credit count
-- Individual reset-credit status, grant time, expiration time, and countdown
-- Automatic API refresh
-- Stable terminal rendering without full-screen blinking
-- Resize-aware centered dashboard
-- Alternate-screen mode, so your original Terminal contents return when you exit
-- Optional Codex auto-resume after a rate limit resets
-- Support for custom `CODEX_HOME` and endpoint environment variables
-- No credentials stored in the repository
+### Usage Monitoring
 
-## Screenshot
+- Displays usage consumed and remaining
+- Shows short-term and weekly limits when available
+- Handles accounts where only one usage window is currently returned
+- Converts reset timestamps to your computer's local time zone
+- Updates countdown values continuously
+- Preserves the last valid data if a refresh temporarily fails
 
-Add a screenshot to the repository at:
+### Reset Credits
 
-```text
-docs/codex-dashboard.png
+When reset-credit data is available, the dashboard can show:
+
+- Number of available credits
+- Credit status
+- Grant time
+- Expiration time
+- Countdown until expiration
+
+### Auto-Resume
+
+Auto-resume can watch for a rate-limited Codex session and resume the most recent non-interactive session after the relevant limit resets.
+
+The resumed command is equivalent to:
+
+```bash
+codex exec resume --last "<continuation prompt>"
 ```
 
-Then replace this section with:
+The resumed process runs inside the selected project directory.
 
-```markdown
-![Codex Dashboard](docs/codex-dashboard.png)
-```
+Auto-resume is disabled by default and must be explicitly enabled.
+
+### Terminal Experience
+
+- Stable rendering without constant full-screen blinking
+- Live countdown updates
+- Resize-aware layout
+- Centered dashboard in wider terminals
+- Alternate-screen behavior where supported
+- Original terminal contents restored when the dashboard exits
 
 ## Requirements
 
-- macOS
+### All Platforms
+
+- An OpenAI account with Codex access
 - Codex installed and signed in
+- Internet access
+- A local Codex authentication file
+
+The dashboard reads authentication from:
+
+```text
+$CODEX_HOME/auth.json
+```
+
+When `CODEX_HOME` is not set, the default is:
+
+```text
+~/.codex/auth.json
+```
+
+### macOS
+
 - Bash
 - `curl`
 - `jq`
-- Codex CLI, only when using auto-resume
+- Codex CLI, when using auto-resume
 
 Install `jq` with Homebrew:
 
@@ -53,17 +113,10 @@ Install `jq` with Homebrew:
 brew install jq
 ```
 
-The script reads your existing Codex authentication file from:
+### Windows
 
-```text
-$CODEX_HOME/auth.json
-```
-
-When `CODEX_HOME` is not set, it defaults to:
-
-```text
-~/.codex/auth.json
-```
+- Windows PowerShell or PowerShell 7
+- Codex CLI, when using auto-resume
 
 ## Installation
 
@@ -74,154 +127,234 @@ git clone https://github.com/Justin1491/codex-dashboard.git
 cd codex-dashboard
 ```
 
-Make the script executable:
+## Running on macOS
+
+Make the current macOS script executable:
 
 ```bash
-chmod 700 codex-usage-dashboard-v2.2.sh
+chmod 700 codex-usage-dashboard-v*.sh
 ```
 
-## Run the Dashboard
-
-From the repository folder:
+Run it:
 
 ```bash
-./codex-usage-dashboard-v2.2.sh
-```
-
-From anywhere:
-
-```bash
-~/Developer/codex-dashboard/codex-usage-dashboard-v2.2.sh
+./codex-usage-dashboard-v*.sh
 ```
 
 Press **Control + C** to exit.
 
-## Command-Line Options
+### macOS Auto-Resume
 
-```text
---auto-resume          Resume the most recent non-interactive Codex session
-                       after the five-hour rate limit resets.
-
---project PATH         Project directory used for Codex resume.
-                       Default: the current directory.
-
---refresh SECONDS      API refresh interval.
-                       Default: 60 seconds.
-
---prompt TEXT          Custom continuation instruction sent to Codex.
-
---help                 Display command help.
-```
-
-Display the built-in help:
+Start the dashboard with auto-resume enabled:
 
 ```bash
-./codex-usage-dashboard-v2.2.sh --help
-```
-
-## Auto-Resume
-
-Auto-resume is disabled by default.
-
-To monitor a project and resume its most recent non-interactive Codex session after the rate limit clears:
-
-```bash
-./codex-usage-dashboard-v2.2.sh \
+./codex-usage-dashboard-v*.sh \
   --auto-resume \
   --project ~/Developer/MyProject
 ```
 
-With a custom continuation prompt:
+Use a custom continuation prompt:
 
 ```bash
-./codex-usage-dashboard-v2.2.sh \
+./codex-usage-dashboard-v*.sh \
   --auto-resume \
   --project ~/Developer/MyProject \
   --prompt "Review the repository and continue the current implementation plan from the last safe point. Do not repeat completed work."
 ```
 
-The dashboard launches Codex using the equivalent of:
+## Running on Windows
 
-```bash
-codex exec resume --last "<continuation prompt>"
+Open PowerShell and navigate to the Windows folder:
+
+```powershell
+cd C:\Developer\codex-dashboard\Windows
 ```
 
-The resumed process runs in the selected project directory. Output is written to a temporary log file, and the dashboard displays the process status.
+For the current PowerShell session, allow the script to run:
 
-### Auto-Resume Limitations
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
 
-Auto-resume:
+Launch the dashboard:
 
-- Resumes the most recent non-interactive Codex session for the selected project
-- Does not currently select among multiple suspended sessions
-- Cannot guarantee that an interrupted command is safe to repeat
-- May require intervention when Codex is waiting for approval or clarification
-- Should be tested on a non-critical project before regular use
+```powershell
+.\CodexDashboard.ps1
+```
 
-For important repositories, review `git status`, current changes, and the resume log after an automated continuation.
+Press **Control + C** to exit.
+
+### Windows Auto-Resume
+
+Enable auto-resume from the command line:
+
+```powershell
+.\CodexDashboard.ps1 `
+  -AutoResume `
+  -Project "C:\Developer\MyProject"
+```
+
+Use a custom continuation prompt:
+
+```powershell
+.\CodexDashboard.ps1 `
+  -AutoResume `
+  -Project "C:\Developer\MyProject" `
+  -Prompt "Review the repository and continue the current implementation plan from the last safe point. Do not repeat completed work."
+```
+
+The Windows dashboard also supports interactive auto-resume configuration. While the dashboard is running, press:
+
+```text
+A
+```
+
+From there you can select or change the project folder and enable or disable auto-resume.
+
+## Command-Line Options
+
+The macOS and Windows launchers support equivalent options using each platform's normal command syntax.
+
+| Purpose | macOS | Windows |
+|---|---|---|
+| Enable auto-resume | `--auto-resume` | `-AutoResume` |
+| Select project directory | `--project PATH` | `-Project PATH` |
+| Change API refresh interval | `--refresh SECONDS` | `-Refresh SECONDS` |
+| Set continuation prompt | `--prompt TEXT` | `-Prompt TEXT` |
+| Show help | `--help` | `-Help` |
+| Show version | varies by launcher | `-Version` |
+
+The default API refresh interval is 60 seconds.
+
+Example using a 30-second refresh interval:
+
+```bash
+./codex-usage-dashboard-v*.sh --refresh 30
+```
+
+```powershell
+.\CodexDashboard.ps1 -Refresh 30
+```
+
+## How Auto-Resume Works
+
+Auto-resume is intended for a Codex CLI task that stopped because the account reached a usage limit.
+
+The basic flow is:
+
+1. The dashboard detects that Codex usage is blocked.
+2. It tracks the relevant reset time.
+3. It waits for the usage limit to clear.
+4. It launches `codex exec resume --last` in the selected project folder.
+5. It sends the configured continuation prompt.
+6. It records and displays the resume status and log location.
+
+Auto-resume targets the **most recent non-interactive Codex session** associated with the selected project.
+
+### Auto-Resume Safety Notes
+
+Auto-resume cannot determine whether every interrupted action is safe to repeat.
+
+It may require intervention when Codex:
+
+- Was waiting for approval
+- Was waiting for clarification
+- Was running an external command
+- Had multiple suspended sessions
+- Stopped at an ambiguous point
+
+For important repositories:
+
+- Review `git status` before enabling auto-resume
+- Use source control
+- Review the generated changes afterward
+- Check the resume log
+- Test the feature on a non-critical project first
 
 ## Refresh Behavior
 
-The dashboard uses two refresh cycles:
+The dashboard uses separate refresh cycles:
 
-- Countdown values update once per second
-- Usage and credit data refresh from the server every 60 seconds by default
+- Countdown values update continuously
+- Usage and reset-credit data refresh from OpenAI at the configured API interval
 
-Change the API refresh interval:
+If a refresh fails, the dashboard keeps the last successful data visible and displays a warning.
 
-```bash
-./codex-usage-dashboard-v2.2.sh --refresh 30
-```
+## OpenAI Usage-Window Changes
 
-Only positive whole-number values are accepted.
+Codex Dashboard does not assume that OpenAI will always return the same limit structure.
 
-## Terminal Behavior
+The application currently accounts for situations where:
 
-The dashboard:
+- Both a short-term and weekly window are returned
+- Only a weekly window is returned
+- Window names or response fields change
+- Reset values arrive in different timestamp formats
+- OpenAI temporarily removes the five-hour window
 
-- Uses Terminal’s alternate screen
-- Centers itself in wider windows
-- Detects both terminal width and height
-- Preserves the last valid dimensions during transient resize events
-- Shows a narrow-window message when the available space is insufficient
-- Restores your original Terminal screen when you exit
-
-For the best layout, use a terminal at least **116 columns wide**.
+Because the dashboard relies on undocumented ChatGPT backend endpoints, OpenAI may change the response again in the future.
 
 ## Environment Variables
 
-### Custom Codex home
+### Custom Codex Home
+
+macOS:
 
 ```bash
 export CODEX_HOME="$HOME/.custom-codex"
-./codex-usage-dashboard-v2.2.sh
+./codex-usage-dashboard-v*.sh
 ```
 
-### Custom usage endpoint
+Windows:
+
+```powershell
+$env:CODEX_HOME = "$HOME\.custom-codex"
+.\CodexDashboard.ps1
+```
+
+### Custom Usage Endpoint
+
+macOS:
 
 ```bash
 export CODEX_USAGE_ENDPOINT="https://example.com/usage"
 ```
 
-### Custom reset-credit endpoint
+Windows:
+
+```powershell
+$env:CODEX_USAGE_ENDPOINT = "https://example.com/usage"
+```
+
+### Custom Reset-Credit Endpoint
+
+macOS:
 
 ```bash
 export CODEX_CREDITS_ENDPOINT="https://example.com/credits"
 ```
 
-These overrides are primarily useful if the backend endpoint changes.
+Windows:
 
-## Security
+```powershell
+$env:CODEX_CREDITS_ENDPOINT = "https://example.com/credits"
+```
 
-The script reads your Codex access token and account ID from your local `auth.json` file at runtime.
+Endpoint overrides are mainly intended as a compatibility fallback if OpenAI changes a backend path.
+
+## Security and Privacy
+
+The dashboard reads the Codex access token and account ID from your local `auth.json` file at runtime.
 
 It does **not**:
 
 - Print your access token
-- Write credentials into the repository
-- Copy `auth.json`
+- Copy your authentication file
+- Commit credentials to the repository
 - Save authentication details in logs
-- Require credentials to be entered into the script
+- Ask you to paste credentials into the script
+- Upload your project source code
+- Add analytics or telemetry
 
 Never commit or share:
 
@@ -243,39 +376,39 @@ auth.json
 
 ## Updating
 
-Pull the latest changes:
+Pull the latest version:
 
 ```bash
 cd ~/Developer/codex-dashboard
 git pull
 ```
 
-Make sure the script remains executable:
+On Windows:
 
-```bash
-chmod 700 codex-usage-dashboard-v2.2.sh
-```
-
-## Development Workflow
-
-After modifying the dashboard:
-
-```bash
-git status
-git add codex-usage-dashboard-v2.2.sh README.md
-git commit -m "Describe the dashboard update"
-git push
-```
-
-Run a Bash syntax check before committing:
-
-```bash
-bash -n codex-usage-dashboard-v2.2.sh
+```powershell
+cd C:\Developer\codex-dashboard
+git pull
 ```
 
 ## Troubleshooting
 
-### `jq is required`
+### Authentication file not found
+
+Confirm Codex is installed and signed in.
+
+macOS:
+
+```bash
+ls -l ~/.codex/auth.json
+```
+
+Windows:
+
+```powershell
+Test-Path "$HOME\.codex\auth.json"
+```
+
+### `jq is required` on macOS
 
 Install it with Homebrew:
 
@@ -283,77 +416,91 @@ Install it with Homebrew:
 brew install jq
 ```
 
-### Authentication file not found
-
-Confirm Codex is installed and signed in, then check:
+### Permission denied on macOS
 
 ```bash
-ls -l ~/.codex/auth.json
+chmod 700 codex-usage-dashboard-v*.sh
 ```
 
-When using a custom Codex location:
+### PowerShell blocks the script
 
-```bash
-echo "$CODEX_HOME"
-ls -l "$CODEX_HOME/auth.json"
+Run this in the same PowerShell window before launching:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
 ```
-
-### Permission denied
-
-Make the script executable:
-
-```bash
-chmod 700 codex-usage-dashboard-v2.2.sh
-```
-
-### Dashboard says the terminal is too small
-
-Make the Terminal window wider or taller. The dashboard will automatically redraw when enough space becomes available.
-
-### Usage data does not refresh
-
-Confirm that Codex is signed in and that your internet connection is working. The dashboard preserves the last successful data when a refresh fails.
 
 ### Auto-resume does not start
 
-Confirm the Codex CLI is available:
+Confirm that the Codex CLI is installed:
 
 ```bash
 codex --version
 ```
 
-Then confirm the project folder exists:
+Then confirm that the selected project directory exists.
 
-```bash
-ls -ld ~/Developer/MyProject
-```
+### Usage data does not refresh
+
+Confirm that:
+
+- Codex is signed in
+- Your internet connection is working
+- `auth.json` exists
+- OpenAI has not changed the backend response format
+
+### Only one usage window appears
+
+This may be expected. OpenAI sometimes returns only the weekly window or temporarily removes the shorter window. The dashboard displays the limits provided for the account rather than inventing a missing window.
 
 ## Known Constraints
 
-Codex Dashboard relies on ChatGPT backend endpoints that are not documented as a stable public API. Their paths, response fields, or behavior may change without notice.
+- The dashboard relies on undocumented ChatGPT backend endpoints
+- OpenAI may change endpoint paths or response fields without notice
+- Auto-resume only targets the most recent non-interactive session
+- Auto-resume cannot select among multiple suspended sessions
+- The dashboard does not monitor task progress
+- This project is not affiliated with or endorsed by OpenAI
 
-The dashboard is an independent utility and is not an official OpenAI product.
+## Contributing
 
-## Roadmap
+Issues and pull requests are welcome.
 
-Potential future improvements:
+Useful contribution areas include:
 
-- Windows PowerShell V2.2 parity
-- Installation script
-- Homebrew formula
-- Compact terminal layout
-- Multi-project task monitoring
-- Session selection instead of only `--last`
-- Notification-only mode
-- Interactive resume confirmation
-- JSON output mode
-- Config file support
-- Release packaging and version checks
+- Compatibility fixes when OpenAI changes usage responses
+- macOS and Windows feature parity
+- Terminal layout improvements
+- Safer auto-resume behavior
+- Session selection
+- Notifications
+- Installation and packaging improvements
+- Documentation and screenshots
+
+Before submitting a change, test the relevant platform and avoid including credentials or local authentication files.
+
+## Screenshot
+
+A screenshot can be added at:
+
+```text
+docs/codex-dashboard.png
+```
+
+Then embedded with:
+
+```markdown
+![Codex Dashboard](docs/codex-dashboard.png)
+```
 
 ## License
 
-No license has been selected yet. Until one is added, normal copyright protections apply and reuse rights are not automatically granted.
+No license has been selected yet. Until a license is added, normal copyright protections apply and reuse rights are not automatically granted.
+
+If the goal is broad community adoption and contribution, consider adding an open-source license such as MIT, Apache 2.0, or GPLv3.
 
 ## Disclaimer
 
-Use auto-resume carefully. Codex may have stopped while waiting for approval, clarification, or completion of an external command. Always review important repositories and generated changes before committing or deploying them.
+Codex Dashboard is an independent community utility and is not an official OpenAI product.
+
+Use auto-resume carefully. Always review important repositories and generated changes before committing, merging, or deploying them.
