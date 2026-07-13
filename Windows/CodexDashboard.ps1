@@ -164,7 +164,7 @@ function Normalize-CodexState {
     $rateLimit = Get-ObjectPropertyValue $Usage @('rate_limit','rateLimit')
     $primary = Get-WindowObject 'primary' (Get-ObjectPropertyValue $rateLimit @('primary_window','primaryWindow'))
     $secondary = Get-WindowObject 'secondary' (Get-ObjectPropertyValue $rateLimit @('secondary_window','secondaryWindow'))
-    $windows = @($primary,$secondary | Where-Object { $null -ne $_ })
+    $windows = @($primary, $secondary) | Where-Object { $null -ne $_ }
 
     if ($windows.Count -eq 2 -and $windows[0].Minutes -eq 0 -and $windows[1].Minutes -eq 0) {
         $ordered = @($windows | Sort-Object ResetAt)
@@ -222,94 +222,181 @@ function Get-ConsoleSize {
     [pscustomobject]@{ Width = $Script:LastWidth; Height = $Script:LastHeight }
 }
 
-function Format-LocalTime { param([long]$Epoch); if ($Epoch -le 0) { return '-' }; try { [DateTimeOffset]::FromUnixTimeSeconds($Epoch).LocalDateTime.ToString('MMM d, yyyy h:mm:ss tt zzz') } catch { '-' } }
+function Format-LocalTime {
+    param([long]$Epoch)
+    if ($Epoch -le 0) { return '-' }
+    try { [DateTimeOffset]::FromUnixTimeSeconds($Epoch).LocalDateTime.ToString('MMM d, yyyy h:mm:ss tt zzz') } catch { '-' }
+}
+
 function Format-Countdown {
     param([long]$Epoch)
     if ($Epoch -le 0) { return '-' }
     $seconds = $Epoch - [DateTimeOffset]::Now.ToUnixTimeSeconds()
     if ($seconds -le 0) { return 'Ready' }
     $span = [TimeSpan]::FromSeconds($seconds)
-    return ('{0}d {1:00}h {2:00}m {3:00}s' -f $span.Days,$span.Hours,$span.Minutes,$span.Seconds)
+    return ('{0}d {1:00}h {2:00}m {3:00}s' -f $span.Days, $span.Hours, $span.Minutes, $span.Seconds)
 }
-function New-AsciiBar { param([int]$Remaining,[int]$Width=20); $r=[math]::Max(0,[math]::Min(100,$Remaining)); $f=[int][math]::Floor($r*$Width/100); '['+('#'*$f)+('-'*($Width-$f))+']' }
-function Center-Line { param([string]$Text,[int]$Width); if($Text.Length-ge$Width){return $Text.Substring(0,$Width)}; (' '*[int][math]::Floor(($Width-$Text.Length)/2))+$Text }
+
+function New-AsciiBar {
+    param([int]$Remaining, [int]$Width = 20)
+    $remainingValue = [math]::Max(0, [math]::Min(100, $Remaining))
+    $filled = [int][math]::Floor($remainingValue * $Width / 100)
+    '[' + ('#' * $filled) + ('-' * ($Width - $filled)) + ']'
+}
+
+function Center-Line {
+    param([string]$Text, [int]$Width)
+    if ($Text.Length -ge $Width) { return $Text.Substring(0, $Width) }
+    (' ' * [int][math]::Floor(($Width - $Text.Length) / 2)) + $Text
+}
 
 function Format-WindowLine {
-    param([string]$Label,$Window,[bool]$NotEnforced=$false)
-    if ($NotEnforced) { return ('{0,-12} {1,-30} {2,-8} {3,-36} {4}' -f $Label,'Temporarily not enforced','-','No reset scheduled','-') }
+    param([string]$Label, $Window, [bool]$NotEnforced = $false)
+    if ($NotEnforced) { return ('{0,-12} {1,-30} {2,-8} {3,-36} {4}' -f $Label, 'Temporarily not enforced', '-', 'No reset scheduled', '-') }
     $remaining = 100 - $Window.Used
-    ('{0,-12} {1,3}% {2}   {3,3}%     {4,-36} {5}' -f $Label,$remaining,(New-AsciiBar $remaining),$Window.Used,(Format-LocalTime $Window.ResetAt),(Format-Countdown $Window.ResetAt))
+    ('{0,-12} {1,3}% {2}   {3,3}%     {4,-36} {5}' -f $Label, $remaining, (New-AsciiBar $remaining), $Window.Used, (Format-LocalTime $Window.ResetAt), (Format-Countdown $Window.ResetAt))
 }
 
 function Render-Dashboard {
     param($State)
     $size = Get-ConsoleSize
-    try { [Console]::SetCursorPosition(0,0) } catch { Clear-Host }
-    if ($size.Width -lt $Script:MinimumWidth) { Clear-Host; Write-Host "Terminal is too small. Current width: $($size.Width). Required: $($Script:MinimumWidth)."; return }
-    $canvas = [math]::Min(160,$size.Width-4)
-    $pad = ' '*[math]::Max(0,[int](($size.Width-$canvas)/2))
+    try { [Console]::SetCursorPosition(0, 0) } catch { Clear-Host }
+
+    if ($size.Width -lt $Script:MinimumWidth) {
+        Clear-Host
+        Write-Host "Terminal is too small. Current width: $($size.Width). Required: $($Script:MinimumWidth)."
+        return
+    }
+
+    $canvas = [math]::Min(160, $size.Width - 4)
+    $pad = ' ' * [math]::Max(0, [int](($size.Width - $canvas) / 2))
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add((Center-Line "CODEX USAGE DASHBOARD v$($Script:AppVersion)" $canvas))
     $lines.Add((Center-Line "Windows PowerShell | Plan: $($State.Plan)" $canvas))
-    $lines.Add(('-'*$canvas))
-    $access = if($State.Allowed-and-not$State.LimitReached){'AVAILABLE'}else{'RATE LIMITED'}
-    $lines.Add(('Access: {0,-14} Last API refresh: {1}' -f $access,$State.RefreshedAt.ToString('h:mm:ss tt')))
+    $lines.Add(('-' * $canvas))
+
+    $access = if ($State.Allowed -and -not $State.LimitReached) { 'AVAILABLE' } else { 'RATE LIMITED' }
+    $lines.Add(('Access: {0,-14} Last API refresh: {1}' -f $access, $State.RefreshedAt.ToString('h:mm:ss tt')))
     $lines.Add('')
     $lines.Add('USAGE WINDOWS')
     $lines.Add('Window       Remaining                      Used     Resets                               Countdown')
+
     if ($State.AmbiguousWindow) {
         $lines.Add((Format-WindowLine 'Usage window' $State.AmbiguousWindow))
     } else {
-        if ($State.ShortWindow) { $label = if($State.ShortWindow.Minutes-gt 0-and($State.ShortWindow.Minutes%60)-eq0){"$([int]($State.ShortWindow.Minutes/60))-hour"}else{'Short-term'}; $lines.Add((Format-WindowLine $label $State.ShortWindow)) } else { $lines.Add((Format-WindowLine 'Short-term' $null $true)) }
-        if ($State.WeeklyWindow) { $lines.Add((Format-WindowLine 'Weekly' $State.WeeklyWindow)) } else { $lines.Add((Format-WindowLine 'Weekly' $null $true)) }
+        if ($State.ShortWindow) {
+            $label = if ($State.ShortWindow.Minutes -gt 0 -and ($State.ShortWindow.Minutes % 60) -eq 0) {
+                "$([int]($State.ShortWindow.Minutes / 60))-hour"
+            } else {
+                'Short-term'
+            }
+            $lines.Add((Format-WindowLine $label $State.ShortWindow))
+        } else {
+            $lines.Add((Format-WindowLine 'Short-term' $null $true))
+        }
+
+        if ($State.WeeklyWindow) {
+            $lines.Add((Format-WindowLine 'Weekly' $State.WeeklyWindow))
+        } else {
+            $lines.Add((Format-WindowLine 'Weekly' $null $true))
+        }
     }
+
     $lines.Add('')
     $lines.Add("RESET CREDITS  Available: $($State.AvailableCredits)")
     $lines.Add('Status       Granted                          Expires                          Countdown')
-    if (@($State.Credits).Count -eq 0) { $lines.Add('No reset-credit records returned.') } else {
-        foreach($credit in @($State.Credits)){ $lines.Add(('{0,-12} {1,-32} {2,-32} {3}' -f $credit.Status,(Format-LocalTime $credit.GrantedAt),(Format-LocalTime $credit.ExpiresAt),(Format-Countdown $credit.ExpiresAt))) }
+
+    if (@($State.Credits).Count -eq 0) {
+        $lines.Add('No reset-credit records returned.')
+    } else {
+        foreach ($credit in @($State.Credits)) {
+            $lines.Add(('{0,-12} {1,-32} {2,-32} {3}' -f $credit.Status, (Format-LocalTime $credit.GrantedAt), (Format-LocalTime $credit.ExpiresAt), (Format-Countdown $credit.ExpiresAt)))
+        }
     }
+
     $lines.Add('')
     $lines.Add("Auto-resume: $($Script:ResumeStatus)")
-    if($Script:ResumeLog){$lines.Add("Resume log: $($Script:ResumeLog)")}
-    if($Script:LastRefreshError){$lines.Add("Warning: $($Script:LastRefreshError)")}
+    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
+    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
     $lines.Add("Terminal: $($size.Width)x$($size.Height) | API refresh: ${Refresh}s | Ctrl+C to exit")
-    $output=New-Object System.Collections.Generic.List[string]
-    foreach($line in $lines){$trim=if($line.Length-gt$canvas){$line.Substring(0,$canvas)}else{$line};$output.Add($pad+$trim.PadRight($canvas))}
-    while($output.Count-lt($size.Height-1)){$output.Add(' '*$size.Width)}
-    Write-Host($output-join[Environment]::NewLine)
+
+    $output = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        $trimmed = if ($line.Length -gt $canvas) { $line.Substring(0, $canvas) } else { $line }
+        $output.Add($pad + $trimmed.PadRight($canvas))
+    }
+    while ($output.Count -lt ($size.Height - 1)) { $output.Add(' ' * $size.Width) }
+    Write-Host ($output -join [Environment]::NewLine)
 }
 
 function Start-CodexResume {
     param($State)
-    if(-not$AutoResume-or-not$State.Allowed-or$State.LimitReached){return}
-    if(-not(Test-Path-LiteralPath$Project-PathType Container)){$Script:ResumeStatus='Failed: project not found';return}
-    if(-not(Get-Command codex-ErrorAction SilentlyContinue)){$Script:ResumeStatus='Failed: codex command not found';return}
-    $logDir=Join-Path([IO.Path]::GetTempPath())'CodexDashboard';New-Item-ItemType Directory-Path$logDir-Force|Out-Null
-    $logPath=Join-Path$logDir("resume-{0}.out.log"-f(Get-Date-Format'yyyyMMdd-HHmmss'));$err=$logPath.Replace('.out.log','.err.log')
-    try{Start-Process-FilePath'codex'-ArgumentList("exec resume --last `"$($Prompt.Replace('"','\"'))`"")-WorkingDirectory$Project-RedirectStandardOutput$logPath-RedirectStandardError$err-WindowStyle Hidden|Out-Null;$Script:ResumeStatus='Started';$Script:ResumeLog=$logPath}catch{$Script:ResumeStatus="Failed: $($_.Exception.Message)"}
-}
+    if (-not $AutoResume -or -not $State.Allowed -or $State.LimitReached) { return }
+    if (-not (Test-Path -LiteralPath $Project -PathType Container)) { $Script:ResumeStatus = 'Failed: project not found'; return }
+    if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { $Script:ResumeStatus = 'Failed: codex command not found'; return }
 
-function Restore-Console { try{[Console]::CursorVisible=$Script:OriginalCursorVisible}catch{};try{[Console]::ResetColor()}catch{};try{[Console]::Clear()}catch{} }
+    $logDir = Join-Path ([IO.Path]::GetTempPath()) 'CodexDashboard'
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    $logPath = Join-Path $logDir ("resume-{0}.out.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $errorLogPath = $logPath.Replace('.out.log', '.err.log')
+    $escapedPrompt = $Prompt.Replace('"', '\"')
 
-try {
-    if($AutoResume-and-not(Test-Path-LiteralPath$Project-PathType Container)){throw"Project directory not found: $Project"}
-    Load-WindowCache
-    $auth=Get-CodexAuth
-    try{$Script:OriginalCursorVisible=[Console]::CursorVisible;[Console]::CursorVisible=$false}catch{}
-    Clear-Host
-    $lastApiRefresh=[DateTime]::MinValue
-    while($true){
-        if(((Get-Date)-$lastApiRefresh).TotalSeconds-ge$Refresh-or$null-eq$Script:LastGoodState){
-            try{
-                $Script:LastGoodState=Get-CodexState-Auth$auth;$Script:LastRefreshError=$null;$lastApiRefresh=Get-Date
-                $blocked=(-not$Script:LastGoodState.Allowed-or$Script:LastGoodState.LimitReached)
-                if($blocked){$Script:WasBlocked=$true;$Script:ResumeStatus='Waiting for Codex access to reset'}elseif($Script:WasBlocked){$Script:WasBlocked=$false;Start-CodexResume-State$Script:LastGoodState}elseif($AutoResume-and$Script:ResumeStatus-ne'Started'){$Script:ResumeStatus='Armed'}
-            }catch{$Script:LastRefreshError=$_.Exception.Message;if($null-eq$Script:LastGoodState){throw};$lastApiRefresh=Get-Date}
-        }
-        Render-Dashboard-State$Script:LastGoodState
-        Start-Sleep-Seconds 1
+    try {
+        Start-Process -FilePath 'codex' -ArgumentList ("exec resume --last `"$escapedPrompt`"") -WorkingDirectory $Project -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath -WindowStyle Hidden | Out-Null
+        $Script:ResumeStatus = 'Started'
+        $Script:ResumeLog = $logPath
+    } catch {
+        $Script:ResumeStatus = "Failed: $($_.Exception.Message)"
     }
 }
-catch{Restore-Console;Write-Error$_.Exception.Message;exit 1}
-finally{Restore-Console}
+
+function Restore-Console {
+    try { [Console]::CursorVisible = $Script:OriginalCursorVisible } catch {}
+    try { [Console]::ResetColor() } catch {}
+    try { [Console]::Clear() } catch {}
+}
+
+try {
+    if ($AutoResume -and -not (Test-Path -LiteralPath $Project -PathType Container)) { throw "Project directory not found: $Project" }
+    Load-WindowCache
+    $auth = Get-CodexAuth
+    try { $Script:OriginalCursorVisible = [Console]::CursorVisible; [Console]::CursorVisible = $false } catch {}
+    Clear-Host
+    $lastApiRefresh = [DateTime]::MinValue
+
+    while ($true) {
+        if (((Get-Date) - $lastApiRefresh).TotalSeconds -ge $Refresh -or $null -eq $Script:LastGoodState) {
+            try {
+                $Script:LastGoodState = Get-CodexState -Auth $auth
+                $Script:LastRefreshError = $null
+                $lastApiRefresh = Get-Date
+                $blocked = (-not $Script:LastGoodState.Allowed -or $Script:LastGoodState.LimitReached)
+
+                if ($blocked) {
+                    $Script:WasBlocked = $true
+                    $Script:ResumeStatus = 'Waiting for Codex access to reset'
+                } elseif ($Script:WasBlocked) {
+                    $Script:WasBlocked = $false
+                    Start-CodexResume -State $Script:LastGoodState
+                } elseif ($AutoResume -and $Script:ResumeStatus -ne 'Started') {
+                    $Script:ResumeStatus = 'Armed'
+                }
+            } catch {
+                $Script:LastRefreshError = $_.Exception.Message
+                if ($null -eq $Script:LastGoodState) { throw }
+                $lastApiRefresh = Get-Date
+            }
+        }
+
+        Render-Dashboard -State $Script:LastGoodState
+        Start-Sleep -Seconds 1
+    }
+}
+catch {
+    Restore-Console
+    Write-Error $_.Exception.Message
+    exit 1
+}
+finally {
+    Restore-Console
+}
