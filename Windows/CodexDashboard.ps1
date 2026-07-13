@@ -168,7 +168,174 @@ function Invoke-RestMethod {
 }
 
 $coreText = Get-Content -LiteralPath $corePath -Raw -Encoding UTF8
-$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.4.3'")
+$coreText = $coreText.Replace("`r`n", "`n")
+$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.5.0'")
+
+$oldState = @'
+$Script:WasBlocked = $false
+$Script:ResumeStatus = if ($AutoResume) { 'Armed' } else { 'Disabled' }
+$Script:ResumeLog = $null
+'@
+$newState = @'
+$Script:WasBlocked = $false
+$Script:AutoResumeEnabled = [bool]$AutoResume
+$Script:ResumeProject = $Project
+$Script:ResumePrompt = $Prompt
+$Script:ResumeStatus = if ($Script:AutoResumeEnabled) { 'Armed' } else { 'Disabled' }
+$Script:ResumeLog = $null
+'@
+$coreText = $coreText.Replace($oldState.Replace("`r`n", "`n"), $newState.Replace("`r`n", "`n"))
+
+$oldDisplay = @'
+    $lines.Add("Auto-resume: $($Script:ResumeStatus)")
+    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
+    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
+    $lines.Add("Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Ctrl+C to exit")
+'@
+$newDisplay = @'
+    $autoResumeLine = "Auto-resume: $($Script:ResumeStatus)"
+    if ($Script:AutoResumeEnabled) { $autoResumeLine += " | Project: $($Script:ResumeProject)" }
+    $lines.Add($autoResumeLine)
+    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
+    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
+    $lines.Add("Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Press A to configure auto-resume | Control+C to exit.")
+'@
+$coreText = $coreText.Replace($oldDisplay.Replace("`r`n", "`n"), $newDisplay.Replace("`r`n", "`n"))
+
+$interactiveFunctions = @'
+function Resolve-InteractiveProjectPath {
+    param([string]$Path)
+
+    $candidate = if ([string]::IsNullOrWhiteSpace($Path)) { $Script:ResumeProject } else { $Path.Trim() }
+    if ($candidate -eq '~') {
+        $candidate = $HOME
+    }
+    elseif ($candidate.StartsWith('~/') -or $candidate.StartsWith('~\')) {
+        $candidate = Join-Path $HOME $candidate.Substring(2)
+    }
+
+    $candidate = [Environment]::ExpandEnvironmentVariables($candidate)
+    try { return (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path } catch { return $null }
+}
+
+function Wait-InteractiveAcknowledgement {
+    [void](Read-Host 'Press Enter to return to the dashboard')
+}
+
+function Restore-DashboardAfterPrompt {
+    Clear-Host
+    try { [Console]::CursorVisible = $false } catch {}
+    if ($null -ne $Script:LastGoodState) { Render-Dashboard -State $Script:LastGoodState }
+}
+
+function Invoke-AutoResumeConfiguration {
+    try { [Console]::CursorVisible = $true } catch {}
+    Clear-Host
+    Write-Host 'Configure Automatic Resume'
+    Write-Host ''
+
+    if ($Script:AutoResumeEnabled) {
+        Write-Host 'Auto-resume is currently armed for:'
+        Write-Host "  $($Script:ResumeProject)"
+        Write-Host ''
+        Write-Host '[C] Change project'
+        Write-Host '[D] Disable auto-resume'
+        Write-Host '[Enter] Cancel'
+        Write-Host ''
+        $action = Read-Host 'Choice'
+
+        if ($action -match '^[dD]$') {
+            $Script:AutoResumeEnabled = $false
+            $Script:ResumeStatus = 'Disabled'
+            $Script:WasBlocked = $false
+            Restore-DashboardAfterPrompt
+            return
+        }
+        if ($action -notmatch '^[cC]$') {
+            Restore-DashboardAfterPrompt
+            return
+        }
+    }
+
+    $projectInput = Read-Host "Project folder [$($Script:ResumeProject)]"
+    $candidate = Resolve-InteractiveProjectPath -Path $projectInput
+    if (-not $candidate -or -not (Test-Path -LiteralPath $candidate -PathType Container)) {
+        Write-Host ''
+        Write-Host "Project directory not found: $(if ($projectInput) { $projectInput } else { $Script:ResumeProject })" -ForegroundColor Red
+        Wait-InteractiveAcknowledgement
+        Restore-DashboardAfterPrompt
+        return
+    }
+
+    if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
+        Write-Host ''
+        Write-Host 'The codex command was not found. Install or sign in to Codex first.' -ForegroundColor Red
+        Wait-InteractiveAcknowledgement
+        Restore-DashboardAfterPrompt
+        return
+    }
+
+    Write-Host ''
+    Write-Host 'Arm auto-resume for:'
+    Write-Host "  $candidate"
+    Write-Host ''
+    $confirmation = Read-Host 'Confirm? [Y/n]'
+    if ($confirmation -match '^(n|no)$') {
+        Restore-DashboardAfterPrompt
+        return
+    }
+
+    $Script:AutoResumeEnabled = $true
+    $Script:ResumeProject = $candidate
+    $Script:WasBlocked = (-not $Script:LastGoodState.Allowed -or $Script:LastGoodState.LimitReached)
+    if ($Script:WasBlocked) {
+        $Script:ResumeStatus = 'Waiting for Codex access to reset'
+    }
+    else {
+        $Script:ResumeStatus = 'Armed; waiting for Codex to become rate limited'
+    }
+
+    Restore-DashboardAfterPrompt
+}
+
+function Test-InteractiveDashboardKey {
+    try {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq [ConsoleKey]::A) { Invoke-AutoResumeConfiguration }
+        }
+    } catch {}
+}
+
+'@
+$coreText = $coreText.Replace('function Start-CodexResume {', $interactiveFunctions + 'function Start-CodexResume {')
+$coreText = $coreText.Replace('if (-not $AutoResume) { return }', 'if (-not $Script:AutoResumeEnabled) { return }')
+$coreText = $coreText.Replace('Test-Path -LiteralPath $Project -PathType Container', 'Test-Path -LiteralPath $Script:ResumeProject -PathType Container')
+$coreText = $coreText.Replace('$Prompt.Replace(''"'',''\"'')', '$Script:ResumePrompt.Replace(''"'',''\"'')')
+$coreText = $coreText.Replace('-WorkingDirectory $Project', '-WorkingDirectory $Script:ResumeProject')
+$coreText = $coreText.Replace('elseif ($AutoResume -and $Script:ResumeStatus -ne ''Started'')', 'elseif ($Script:AutoResumeEnabled -and $Script:ResumeStatus -ne ''Started'')')
+$coreText = $coreText.Replace("                    `$Script:ResumeStatus = 'Waiting for Codex access to reset'", "                    `$Script:ResumeStatus = if (`$Script:AutoResumeEnabled) { 'Waiting for Codex access to reset' } else { 'Disabled' }")
+$coreText = $coreText.Replace("        `$Script:ResumeStatus = 'Waiting for Codex access to reset'", "        `$Script:ResumeStatus = if (`$Script:AutoResumeEnabled) { 'Waiting for Codex access to reset' } else { 'Disabled' }")
+$coreText = $coreText.Replace('if ($AutoResume -and -not (Test-Path -LiteralPath $Script:ResumeProject -PathType Container))', 'if ($Script:AutoResumeEnabled -and -not (Test-Path -LiteralPath $Script:ResumeProject -PathType Container))')
+$coreText = $coreText.Replace('throw "Project directory not found: $Project"', 'throw "Project directory not found: $($Script:ResumeProject)"')
+$coreText = $coreText.Replace('        Render-Dashboard -State $Script:LastGoodState', "        Test-InteractiveDashboardKey`n        Render-Dashboard -State `$Script:LastGoodState")
+
+
+$requiredOverlays = @(
+    "`$Script:AppVersion = '2.5.0'",
+    'function Invoke-AutoResumeConfiguration',
+    'function Test-InteractiveDashboardKey',
+    'Press A to configure auto-resume',
+    '$Script:AutoResumeEnabled',
+    'if (-not $Script:AutoResumeEnabled) { return }',
+    '-WorkingDirectory $Script:ResumeProject',
+    '$Script:ResumePrompt.Replace',
+    'Test-InteractiveDashboardKey'
+)
+foreach ($marker in $requiredOverlays) {
+    if (-not $coreText.Contains($marker)) { throw "Interactive dashboard overlay failed: $marker" }
+}
+
 $coreScript = [ScriptBlock]::Create($coreText)
 & $coreScript @PSBoundParameters
 exit $LASTEXITCODE
