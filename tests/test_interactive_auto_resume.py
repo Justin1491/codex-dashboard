@@ -18,6 +18,12 @@ def test_macos_launcher_injects_interactive_auto_resume():
     assert 'RESUME_PROJECT="$candidate"' in text
 
 
+def test_macos_overlay_is_loaded_without_command_substitution():
+    text = (ROOT / "macOS" / "codex-usage-dashboard.sh").read_text()
+    assert 'interactive_overlay="$(cat <<\'EOF_OVERLAY\'' not in text
+    assert "IFS= read -r -d '' interactive_overlay <<'EOF_OVERLAY' || true" in text
+
+
 def test_windows_launcher_injects_interactive_auto_resume():
     text = (ROOT / "Windows" / "CodexDashboard.ps1").read_text()
     assert "`$Script:AppVersion = '2.5.0'" in text

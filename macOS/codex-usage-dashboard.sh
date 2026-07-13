@@ -151,7 +151,7 @@ _codex_transform_core() {
   local loop_replacement=$'    _codex_poll_interactive_key\n\n    sleep 0.2'
   local interactive_overlay
 
-  interactive_overlay="$(cat <<'EOF_OVERLAY'
+  IFS= read -r -d '' interactive_overlay <<'EOF_OVERLAY' || true
 _codex_restore_dashboard_after_prompt() {
   enter_dashboard_screen
   ALT_SCREEN_ACTIVE=true
@@ -263,7 +263,6 @@ _codex_poll_interactive_key() {
 }
 
 EOF_OVERLAY
-)"
 
   export CODEX_CORE_OLD_VERSION="$old_version"
   export CODEX_CORE_NEW_VERSION="$new_version"
