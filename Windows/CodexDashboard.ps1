@@ -79,9 +79,14 @@ function Save-NormalizedCache {
 
 function Classify-NormalizedWindow {
     param([string]$Slot,$Window,[bool]$OnlyWindow,[hashtable]$Cache)
+    $seconds = [long](Get-NormalizedProperty $Window @('limit_window_seconds','limitWindowSeconds','window_seconds','windowSeconds') 0)
     $minutes = [int](Get-NormalizedProperty $Window @('window_minutes','windowMinutes','window_size_minutes','windowSizeMinutes') 0)
     $resetAt = ConvertTo-NormalizedEpoch (Get-NormalizedProperty $Window @('reset_at','resetAt') 0)
 
+    # Explicit duration always wins over cache so stale classifications cannot
+    # move a weekly response into the short-term row.
+    if ($seconds -ge 259200) { return 'weekly' }
+    if ($seconds -gt 0 -and $seconds -le 43200) { return 'short' }
     if ($minutes -ge 4320) { return 'weekly' }
     if ($minutes -gt 0 -and $minutes -le 720) { return 'short' }
 
@@ -102,14 +107,33 @@ function Classify-NormalizedWindow {
     return 'short'
 }
 
+
+function Normalize-WindowForCore {
+    param($Window)
+    if ($null -eq $Window) { return $null }
+
+    $seconds = [long](Get-NormalizedProperty $Window @('limit_window_seconds','limitWindowSeconds','window_seconds','windowSeconds') 0)
+    if ($seconds -gt 0) {
+        # The current seconds-based schema reports the percentage displayed by
+        # OpenAI as remaining, despite the legacy used_percent property name.
+        $reportedValue = Get-NormalizedProperty $Window @('remaining_percent','remainingPercent','used_percent','usedPercent') 0
+        $reported = 0.0
+        [void][double]::TryParse([string]$reportedValue,[ref]$reported)
+        $remaining = [int][math]::Round([math]::Max(0,[math]::Min(100,$reported)))
+        Set-NormalizedProperty -Object $Window -Name 'window_minutes' -Value ([int][math]::Floor($seconds / 60))
+        Set-NormalizedProperty -Object $Window -Name 'used_percent' -Value (100 - $remaining)
+    }
+    return $Window
+}
+
 function Normalize-UsageResponse {
     param($Response)
     $clone = ($Response | ConvertTo-Json -Depth 20 | ConvertFrom-Json)
     $rateLimit = Get-NormalizedProperty $clone @('rate_limit','rateLimit')
     if ($null -eq $rateLimit) { return $clone }
 
-    $primary = Get-NormalizedProperty $rateLimit @('primary_window','primaryWindow')
-    $secondary = Get-NormalizedProperty $rateLimit @('secondary_window','secondaryWindow')
+    $primary = Normalize-WindowForCore (Get-NormalizedProperty $rateLimit @('primary_window','primaryWindow'))
+    $secondary = Normalize-WindowForCore (Get-NormalizedProperty $rateLimit @('secondary_window','secondaryWindow'))
     $cache = Load-NormalizedCache
     $short = $null
     $weekly = $null
@@ -169,7 +193,7 @@ function Invoke-RestMethod {
 
 $coreText = Get-Content -LiteralPath $corePath -Raw -Encoding UTF8
 $coreText = $coreText.Replace("`r`n", "`n")
-$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.5.0'")
+$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.6.0'")
 
 $oldState = @'
 $Script:WasBlocked = $false
@@ -322,7 +346,7 @@ $coreText = $coreText.Replace('        Render-Dashboard -State $Script:LastGoodS
 
 
 $requiredOverlays = @(
-    "`$Script:AppVersion = '2.5.0'",
+    "`$Script:AppVersion = '2.6.0'",
     'function Invoke-AutoResumeConfiguration',
     'function Test-InteractiveDashboardKey',
     'Press A to configure auto-resume',
