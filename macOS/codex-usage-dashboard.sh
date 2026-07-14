@@ -43,11 +43,17 @@ _codex_cache_kind() {
 
 _codex_classify() {
   local slot="$1" window="$2" only_window="$3"
-  local minutes reset cached previous_reset previous_kind delta remaining now
+  local seconds minutes reset cached previous_reset previous_kind delta remaining now
+  seconds="$(command jq -r '.limit_window_seconds // .window_seconds // 0' <<<"$window")"
   minutes="$(command jq -r '.window_minutes // .window_size_minutes // 0' <<<"$window")"
   reset="$(_codex_epoch "$(command jq -r '.reset_at // 0' <<<"$window")")"
+  [[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
   [[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
 
+  # Current responses expose the window duration in seconds. Explicit duration
+  # always wins over cached guesses so a stale cache cannot swap the rows.
+  if ((seconds >= 259200)); then printf 'weekly'; return; fi
+  if ((seconds > 0 && seconds <= 43200)); then printf 'short'; return; fi
   if ((minutes >= 4320)); then printf 'weekly'; return; fi
   if ((minutes > 0 && minutes <= 720)); then printf 'short'; return; fi
 
@@ -70,6 +76,30 @@ _codex_classify() {
   printf 'short'
 }
 
+
+_codex_prepare_window() {
+  local window="$1" seconds
+  [[ "$window" != 'null' ]] || { printf 'null'; return; }
+
+  seconds="$(command jq -r '.limit_window_seconds // .window_seconds // 0' <<<"$window")"
+  [[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+
+  if ((seconds > 0)); then
+    # In the current seconds-based schema, the value named used_percent tracks
+    # the percentage shown by OpenAI as remaining. Convert it back to the older
+    # core contract, where used_percent literally means used.
+    command jq -c '
+      (.remaining_percent // .remainingPercent // .used_percent // .usedPercent // 0) as $reported |
+      (($reported | tonumber? // 0) | round) as $rounded |
+      (if $rounded < 0 then 0 elif $rounded > 100 then 100 else $rounded end) as $remaining |
+      .window_minutes = (((.limit_window_seconds // .window_seconds) / 60) | floor) |
+      .used_percent = (100 - $remaining)
+    ' <<<"$window"
+  else
+    printf '%s' "$window"
+  fi
+}
+
 _codex_cache_window() {
   local slot="$1" window="$2" kind="$3" reset
   reset="$(_codex_epoch "$(command jq -r '.reset_at // 0' <<<"$window")")"
@@ -79,8 +109,8 @@ _codex_cache_window() {
 _codex_normalize_usage() {
   local json="$1" primary secondary primary_kind secondary_kind short weekly only
   _codex_load_cache
-  primary="$(command jq -c '.rate_limit.primary_window // null' <<<"$json")"
-  secondary="$(command jq -c '.rate_limit.secondary_window // null' <<<"$json")"
+  primary="$(_codex_prepare_window "$(command jq -c '.rate_limit.primary_window // null' <<<"$json")")"
+  secondary="$(_codex_prepare_window "$(command jq -c '.rate_limit.secondary_window // null' <<<"$json")")"
   short='null'; weekly='null'
 
   if [[ "$primary" != 'null' && "$secondary" != 'null' ]]; then
@@ -133,13 +163,13 @@ curl() {
 }
 
 export CACHE_PATH USAGE_URL CODEX_WINDOW_CACHE
-export -f curl _codex_epoch _codex_load_cache _codex_save_cache _codex_cache_kind _codex_classify _codex_cache_window _codex_normalize_usage
+export -f curl _codex_epoch _codex_load_cache _codex_save_cache _codex_cache_kind _codex_classify _codex_prepare_window _codex_cache_window _codex_normalize_usage
 
 # Interactive setup supplements the existing --auto-resume and --project options.
 # The stable core remains untouched; this launcher injects the small UI overlay.
 _codex_transform_core() {
   local old_version='VERSION="2.3.0"'
-  local new_version='VERSION="2.5.4"'
+  local new_version='VERSION="2.6.0"'
   local old_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press Control + C to exit.${RESET}"'
   local new_footer='write_rel "$FOOTER_HELP_ROW" 3 "${DIM}Press A to configure auto-resume | Control+C to exit.${RESET}"'
   local insert_before='cleanup() {'
@@ -372,7 +402,7 @@ EOF_OVERLAY
     s/\Q$ENV{CODEX_CORE_CLEANUP_OLD}\E/$ENV{CODEX_CORE_CLEANUP_NEW}/ge;
   ' "$CORE_SCRIPT")" || return 1
 
-  grep -Fq 'VERSION="2.5.4"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
+  grep -Fq 'VERSION="2.6.0"' <<<"$transformed" || { printf 'Error: dashboard version overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_configure_auto_resume()' <<<"$transformed" || { printf 'Error: interactive auto-resume overlay failed.\n' >&2; return 1; }
   grep -Fq 'Press A to configure auto-resume' <<<"$transformed" || { printf 'Error: interactive dashboard help overlay failed.\n' >&2; return 1; }
   grep -Fq '_codex_poll_interactive_key' <<<"$transformed" || { printf 'Error: interactive key handler overlay failed.\n' >&2; return 1; }
