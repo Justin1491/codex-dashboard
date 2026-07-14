@@ -107,7 +107,6 @@ function Classify-NormalizedWindow {
     return 'short'
 }
 
-
 function Normalize-WindowForCore {
     param($Window)
     if ($null -eq $Window) { return $null }
@@ -193,7 +192,7 @@ function Invoke-RestMethod {
 
 $coreText = Get-Content -LiteralPath $corePath -Raw -Encoding UTF8
 $coreText = $coreText.Replace("`r`n", "`n")
-$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.6.0'")
+$coreText = $coreText.Replace("`$Script:AppVersion = '2.3.0'", "`$Script:AppVersion = '2.7.0'")
 
 $oldState = @'
 $Script:WasBlocked = $false
@@ -210,21 +209,14 @@ $Script:ResumeLog = $null
 '@
 $coreText = $coreText.Replace($oldState.Replace("`r`n", "`n"), $newState.Replace("`r`n", "`n"))
 
-$oldDisplay = @'
-    $lines.Add("Auto-resume: $($Script:ResumeStatus)")
-    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
-    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
-    $lines.Add("Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Ctrl+C to exit")
-'@
-$newDisplay = @'
-    $autoResumeLine = "Auto-resume: $($Script:ResumeStatus)"
-    if ($Script:AutoResumeEnabled) { $autoResumeLine += " | Project: $($Script:ResumeProject)" }
-    $lines.Add($autoResumeLine)
-    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
-    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
-    $lines.Add("Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Press A to configure auto-resume | Control+C to exit.")
-'@
-$coreText = $coreText.Replace($oldDisplay.Replace("`r`n", "`n"), $newDisplay.Replace("`r`n", "`n"))
+$coreText = $coreText.Replace(
+    '    [void]$rows.Add((New-AutoResumeRow -Status $Script:ResumeStatus))',
+    '    [void]$rows.Add((New-AutoResumeRow -Status $Script:ResumeStatus -Project $(if ($Script:AutoResumeEnabled) { $Script:ResumeProject } else { $null })))'
+)
+$coreText = $coreText.Replace(
+    '    [void]$rows.Add((New-FooterRow -Text "Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Ctrl+C to exit"))',
+    '    [void]$rows.Add((New-FooterRow -Text "Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Press A to configure auto-resume | Control+C to exit."))'
+)
 
 $interactiveFunctions = @'
 function Resolve-InteractiveProjectPath {
@@ -344,9 +336,8 @@ $coreText = $coreText.Replace('if ($AutoResume -and -not (Test-Path -LiteralPath
 $coreText = $coreText.Replace('throw "Project directory not found: $Project"', 'throw "Project directory not found: $($Script:ResumeProject)"')
 $coreText = $coreText.Replace('        Render-Dashboard -State $Script:LastGoodState', "        Test-InteractiveDashboardKey`n        Render-Dashboard -State `$Script:LastGoodState")
 
-
 $requiredOverlays = @(
-    "`$Script:AppVersion = '2.6.0'",
+    "`$Script:AppVersion = '2.7.0'",
     'function Invoke-AutoResumeConfiguration',
     'function Test-InteractiveDashboardKey',
     'Press A to configure auto-resume',
@@ -354,6 +345,7 @@ $requiredOverlays = @(
     'if (-not $Script:AutoResumeEnabled) { return }',
     '-WorkingDirectory $Script:ResumeProject',
     '$Script:ResumePrompt.Replace',
+    'New-AutoResumeRow -Status $Script:ResumeStatus -Project',
     'Test-InteractiveDashboardKey'
 )
 foreach ($marker in $requiredOverlays) {

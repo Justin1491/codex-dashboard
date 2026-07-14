@@ -218,6 +218,172 @@ function Write-ColoredLine {
     Write-Host $Text -ForegroundColor $Color
 }
 
+function New-DashboardSegment {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [ConsoleColor]$Color = [ConsoleColor]::Gray
+    )
+    [pscustomobject]@{ Text = $Text; Color = $Color }
+}
+
+function Get-DashboardRowText {
+    param([object[]]$Segments)
+    -join @($Segments | ForEach-Object { [string]$_.Text })
+}
+
+function New-UsageBarSegments {
+    param([int]$Remaining, [int]$Width = 20)
+    $remainingValue = [math]::Max(0,[math]::Min(100,$Remaining))
+    $filled = [int][math]::Floor($remainingValue * $Width / 100)
+    $empty = $Width - $filled
+    @(
+        New-DashboardSegment -Text '[' -Color ([ConsoleColor]::Gray)
+        New-DashboardSegment -Text ('#' * $filled) -Color ([ConsoleColor]::Green)
+        New-DashboardSegment -Text ('-' * $empty) -Color ([ConsoleColor]::DarkGray)
+        New-DashboardSegment -Text ']' -Color ([ConsoleColor]::Gray)
+    )
+}
+
+function Get-CountdownColor {
+    param([string]$Countdown)
+    if ($Countdown -eq 'Ready') { return [ConsoleColor]::Green }
+    if ($Countdown -eq 'Unknown') { return [ConsoleColor]::Red }
+    return [ConsoleColor]::Yellow
+}
+
+function Get-CreditStatusColor {
+    param([string]$Status)
+    if ($Status -match '(?i)available|active|unused') { return [ConsoleColor]::Green }
+    if ($Status -match '(?i)pending|waiting|queued') { return [ConsoleColor]::Yellow }
+    if ($Status -match '(?i)expired|failed|invalid|revoked') { return [ConsoleColor]::Red }
+    return [ConsoleColor]::Gray
+}
+
+function Get-AutoResumeColor {
+    param([string]$Status)
+    if ($Status -match '(?i)failed|error') { return [ConsoleColor]::Red }
+    if ($Status -match '(?i)waiting') { return [ConsoleColor]::Yellow }
+    if ($Status -match '(?i)enabled|armed|started') { return [ConsoleColor]::Green }
+    if ($Status -match '(?i)disabled|off') { return [ConsoleColor]::DarkGray }
+    return [ConsoleColor]::Gray
+}
+
+function Write-ColoredDashboardRow {
+    param(
+        [object[]]$Segments,
+        [string]$Pad,
+        [int]$Canvas,
+        [int]$ScreenWidth
+    )
+
+    Write-Host $Pad -NoNewline
+    $written = 0
+    foreach ($segment in @($Segments)) {
+        $available = $Canvas - $written
+        if ($available -le 0) { break }
+        $text = [string]$segment.Text
+        if ($text.Length -gt $available) { $text = $text.Substring(0,$available) }
+        if ($text.Length -gt 0) {
+            Write-Host $text -ForegroundColor $segment.Color -NoNewline
+            $written += $text.Length
+        }
+    }
+
+    $tail = [math]::Max(0,$ScreenWidth - $Pad.Length - $written)
+    Write-Host (' ' * $tail)
+}
+
+function Write-PlainDashboardRows {
+    param(
+        [System.Collections.IEnumerable]$Rows,
+        [string]$Pad,
+        [int]$Canvas,
+        [int]$ScreenWidth
+    )
+
+    foreach ($row in $Rows) {
+        $text = Get-DashboardRowText -Segments @($row)
+        if ($text.Length -gt $Canvas) { $text = $text.Substring(0,$Canvas) }
+        $line = ($Pad + $text.PadRight($Canvas)).PadRight($ScreenWidth)
+        Write-Host $line
+    }
+}
+
+function Write-DashboardRows {
+    param(
+        [System.Collections.IEnumerable]$Rows,
+        [string]$Pad,
+        [int]$Canvas,
+        [int]$ScreenWidth
+    )
+
+    try {
+        foreach ($row in $Rows) {
+            Write-ColoredDashboardRow -Segments @($row) -Pad $Pad -Canvas $Canvas -ScreenWidth $ScreenWidth
+        }
+    }
+    catch {
+        try { [Console]::ResetColor() } catch {}
+        try { [Console]::SetCursorPosition(0,0) } catch { Clear-Host }
+        Write-PlainDashboardRows -Rows $Rows -Pad $Pad -Canvas $Canvas -ScreenWidth $ScreenWidth
+    }
+}
+
+function New-UsageWindowRow {
+    param(
+        [string]$Label,
+        [bool]$Available,
+        [int]$Remaining,
+        [int]$Used,
+        [long]$Reset
+    )
+
+    if (-not $Available) {
+        return @(
+            New-DashboardSegment -Text ('{0,-11} ' -f $Label) -Color ([ConsoleColor]::DarkGray)
+            New-DashboardSegment -Text ('{0,-50} {1,-36} {2}' -f 'Temporarily not enforced','No reset scheduled','-') -Color ([ConsoleColor]::DarkGray)
+        )
+    }
+
+    $segments = [System.Collections.Generic.List[object]]::new()
+    [void]$segments.Add((New-DashboardSegment -Text ('{0,-11} ' -f $Label) -Color ([ConsoleColor]::DarkGray)))
+    [void]$segments.Add((New-DashboardSegment -Text ('{0,3}% ' -f $Remaining) -Color ([ConsoleColor]::Green)))
+    foreach ($segment in @(New-UsageBarSegments -Remaining $Remaining)) { [void]$segments.Add($segment) }
+    [void]$segments.Add((New-DashboardSegment -Text ('   {0,3}%       ' -f $Used) -Color ([ConsoleColor]::Gray)))
+    [void]$segments.Add((New-DashboardSegment -Text ('{0,-36} ' -f (Format-LocalTime $Reset)) -Color ([ConsoleColor]::Yellow)))
+    $countdown = Format-Countdown $Reset
+    [void]$segments.Add((New-DashboardSegment -Text $countdown -Color (Get-CountdownColor $countdown)))
+    return @($segments)
+}
+
+function New-CreditRow {
+    param($Credit)
+    $countdown = Format-Countdown $Credit.ExpiresAt
+    @(
+        New-DashboardSegment -Text ('{0,-14} ' -f $Credit.Status) -Color (Get-CreditStatusColor $Credit.Status)
+        New-DashboardSegment -Text ('{0,-36} ' -f (Format-LocalTime $Credit.GrantedAt)) -Color ([ConsoleColor]::Gray)
+        New-DashboardSegment -Text ('{0,-36} ' -f (Format-LocalTime $Credit.ExpiresAt)) -Color ([ConsoleColor]::Gray)
+        New-DashboardSegment -Text $countdown -Color (Get-CountdownColor $countdown)
+    )
+}
+
+function New-AutoResumeRow {
+    param([string]$Status, [string]$Project = $null)
+    $segments = [System.Collections.Generic.List[object]]::new()
+    [void]$segments.Add((New-DashboardSegment -Text 'Auto-resume: ' -Color ([ConsoleColor]::DarkGray)))
+    [void]$segments.Add((New-DashboardSegment -Text $Status -Color (Get-AutoResumeColor $Status)))
+    if (-not [string]::IsNullOrWhiteSpace($Project)) {
+        [void]$segments.Add((New-DashboardSegment -Text ' | Project: ' -Color ([ConsoleColor]::DarkGray)))
+        [void]$segments.Add((New-DashboardSegment -Text $Project -Color ([ConsoleColor]::Gray)))
+    }
+    return @($segments)
+}
+
+function New-FooterRow {
+    param([string]$Text)
+    @((New-DashboardSegment -Text $Text -Color ([ConsoleColor]::DarkGray)))
+}
+
 function Render-Dashboard {
     param($State)
     $size = Get-ConsoleSize
@@ -233,44 +399,60 @@ function Render-Dashboard {
 
     $canvas = [math]::Min(160,$size.Width - 4)
     $pad = ' ' * [math]::Max(0,[int](($size.Width - $canvas) / 2))
-    $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add((Center-Line "CODEX USAGE DASHBOARD v$($Script:AppVersion)" $canvas))
-    $lines.Add((Center-Line "Windows PowerShell | Plan: $($State.Plan)" $canvas))
-    $lines.Add(('-' * $canvas))
-    $access = if ($State.Allowed -and -not $State.LimitReached) { 'AVAILABLE' } else { 'RATE LIMITED' }
-    $lines.Add(('Access: {0,-14}  Last API refresh: {1}' -f $access,$State.RefreshedAt.ToString('h:mm:ss tt')))
-    $lines.Add('')
-    $lines.Add('USAGE WINDOWS')
-    $lines.Add(('Window      Remaining                    Used       Resets                               Countdown'))
-    if ($State.PrimaryWindowAvailable) {
-        $lines.Add(('{0,-11} {1,3}% {2}   {3,3}%       {4,-36} {5}' -f $State.PrimaryWindowLabel,$State.FiveRemaining,(New-AsciiBar $State.FiveRemaining),$State.FiveUsed,(Format-LocalTime $State.FiveReset),(Format-Countdown $State.FiveReset)))
-    } else {
-        $lines.Add(('Short-term  {0,-50} {1,-36} {2}' -f 'Temporarily not enforced','No reset scheduled','-'))
-    }
-    $lines.Add(('Weekly     {0,3}% {1}   {2,3}%       {3,-36} {4}' -f $State.WeekRemaining,(New-AsciiBar $State.WeekRemaining),$State.WeekUsed,(Format-LocalTime $State.WeekReset),(Format-Countdown $State.WeekReset)))
-    $lines.Add('')
-    $lines.Add("RESET CREDITS  Available: $($State.AvailableCredits)")
-    $lines.Add(('Status         Granted                              Expires                              Countdown'))
-    if (@($State.Credits).Count -eq 0) {
-        $lines.Add('No reset-credit records returned.')
-    } else {
-        foreach ($credit in @($State.Credits)) {
-            $lines.Add(('{0,-14} {1,-36} {2,-36} {3}' -f $credit.Status,(Format-LocalTime $credit.GrantedAt),(Format-LocalTime $credit.ExpiresAt),(Format-Countdown $credit.ExpiresAt)))
-        }
-    }
-    $lines.Add('')
-    $lines.Add("Auto-resume: $($Script:ResumeStatus)")
-    if ($Script:ResumeLog) { $lines.Add("Resume log: $($Script:ResumeLog)") }
-    if ($Script:LastRefreshError) { $lines.Add("Warning: $($Script:LastRefreshError)") }
-    $lines.Add("Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Ctrl+C to exit")
+    $rows = [System.Collections.Generic.List[object]]::new()
 
-    $output = New-Object System.Collections.Generic.List[string]
-    foreach ($line in $lines) {
-        $trimmed = if ($line.Length -gt $canvas) { $line.Substring(0,$canvas) } else { $line }
-        $output.Add($pad + $trimmed.PadRight($canvas))
+    [void]$rows.Add(@(New-DashboardSegment -Text (Center-Line "CODEX USAGE DASHBOARD v$($Script:AppVersion)" $canvas) -Color ([ConsoleColor]::Cyan)))
+    [void]$rows.Add(@(New-DashboardSegment -Text (Center-Line "Windows PowerShell | Plan: $($State.Plan)" $canvas) -Color ([ConsoleColor]::Cyan)))
+    [void]$rows.Add(@(New-DashboardSegment -Text ('-' * $canvas) -Color ([ConsoleColor]::Cyan)))
+
+    $access = if ($State.Allowed -and -not $State.LimitReached) { 'AVAILABLE' } else { 'RATE LIMITED' }
+    $accessColor = if ($access -eq 'AVAILABLE') { [ConsoleColor]::Green } else { [ConsoleColor]::Red }
+    [void]$rows.Add(@(
+        New-DashboardSegment -Text 'Access: ' -Color ([ConsoleColor]::DarkGray)
+        New-DashboardSegment -Text ('{0,-14}' -f $access) -Color $accessColor
+        New-DashboardSegment -Text '  Last API refresh: ' -Color ([ConsoleColor]::DarkGray)
+        New-DashboardSegment -Text $State.RefreshedAt.ToString('h:mm:ss tt') -Color ([ConsoleColor]::Gray)
+    ))
+
+    [void]$rows.Add(@())
+    [void]$rows.Add(@(New-DashboardSegment -Text 'USAGE WINDOWS' -Color ([ConsoleColor]::Cyan)))
+    [void]$rows.Add(@(New-DashboardSegment -Text 'Window      Remaining                    Used       Resets                               Countdown' -Color ([ConsoleColor]::DarkGray)))
+    [void]$rows.Add((New-UsageWindowRow -Label $State.PrimaryWindowLabel -Available $State.PrimaryWindowAvailable -Remaining $State.FiveRemaining -Used $State.FiveUsed -Reset $State.FiveReset))
+    [void]$rows.Add((New-UsageWindowRow -Label 'Weekly' -Available $true -Remaining $State.WeekRemaining -Used $State.WeekUsed -Reset $State.WeekReset))
+
+    [void]$rows.Add(@())
+    [void]$rows.Add(@(
+        New-DashboardSegment -Text 'RESET CREDITS  ' -Color ([ConsoleColor]::Cyan)
+        New-DashboardSegment -Text 'Available: ' -Color ([ConsoleColor]::DarkGray)
+        New-DashboardSegment -Text ([string]$State.AvailableCredits) -Color ([ConsoleColor]::Green)
+    ))
+    [void]$rows.Add(@(New-DashboardSegment -Text 'Status         Granted                              Expires                              Countdown' -Color ([ConsoleColor]::DarkGray)))
+
+    if (@($State.Credits).Count -eq 0) {
+        [void]$rows.Add(@(New-DashboardSegment -Text 'No reset-credit records returned.' -Color ([ConsoleColor]::DarkGray)))
     }
-    while ($output.Count -lt ($size.Height - 1)) { $output.Add(' ' * $size.Width) }
-    Write-Host ($output -join [Environment]::NewLine)
+    else {
+        foreach ($credit in @($State.Credits)) { [void]$rows.Add((New-CreditRow -Credit $credit)) }
+    }
+
+    [void]$rows.Add(@())
+    [void]$rows.Add((New-AutoResumeRow -Status $Script:ResumeStatus))
+    if ($Script:ResumeLog) {
+        [void]$rows.Add(@(
+            New-DashboardSegment -Text 'Resume log: ' -Color ([ConsoleColor]::DarkGray)
+            New-DashboardSegment -Text $Script:ResumeLog -Color ([ConsoleColor]::Gray)
+        ))
+    }
+    if ($Script:LastRefreshError) {
+        [void]$rows.Add(@(
+            New-DashboardSegment -Text 'Warning: ' -Color ([ConsoleColor]::Red)
+            New-DashboardSegment -Text $Script:LastRefreshError -Color ([ConsoleColor]::Red)
+        ))
+    }
+    [void]$rows.Add((New-FooterRow -Text "Terminal: $($size.Width)x$($size.Height)  |  API refresh: ${Refresh}s  |  Ctrl+C to exit"))
+
+    while ($rows.Count -lt ($size.Height - 1)) { [void]$rows.Add(@()) }
+    Write-DashboardRows -Rows $rows -Pad $pad -Canvas $canvas -ScreenWidth $size.Width
 }
 
 function Start-CodexResume {
