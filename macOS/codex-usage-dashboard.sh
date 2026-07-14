@@ -85,15 +85,21 @@ _codex_prepare_window() {
   [[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
 
   if ((seconds > 0)); then
-    # In the current seconds-based schema, the value named used_percent tracks
-    # the percentage shown by OpenAI as remaining. Convert it back to the older
-    # core contract, where used_percent literally means used.
+    # The current seconds-based schema keeps used_percent as the amount used.
+    # Only an explicit remaining_percent field needs conversion for the legacy core.
     command jq -c '
-      (.remaining_percent // .remainingPercent // .used_percent // .usedPercent // 0) as $reported |
-      (($reported | tonumber? // 0) | round) as $rounded |
-      (if $rounded < 0 then 0 elif $rounded > 100 then 100 else $rounded end) as $remaining |
+      def clamp_percent:
+        ((tonumber? // 0) | round) |
+        if . < 0 then 0 elif . > 100 then 100 else . end;
+      (.remaining_percent // .remainingPercent) as $remaining_reported |
+      (.used_percent // .usedPercent // 0) as $used_reported |
       .window_minutes = (((.limit_window_seconds // .window_seconds) / 60) | floor) |
-      .used_percent = (100 - $remaining)
+      .used_percent = (
+        if $remaining_reported != null
+        then 100 - ($remaining_reported | clamp_percent)
+        else ($used_reported | clamp_percent)
+        end
+      )
     ' <<<"$window"
   else
     printf '%s' "$window"
