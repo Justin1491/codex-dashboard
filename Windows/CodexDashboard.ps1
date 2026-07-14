@@ -113,14 +113,21 @@ function Normalize-WindowForCore {
 
     $seconds = [long](Get-NormalizedProperty $Window @('limit_window_seconds','limitWindowSeconds','window_seconds','windowSeconds') 0)
     if ($seconds -gt 0) {
-        # The current seconds-based schema reports the percentage displayed by
-        # OpenAI as remaining, despite the legacy used_percent property name.
-        $reportedValue = Get-NormalizedProperty $Window @('remaining_percent','remainingPercent','used_percent','usedPercent') 0
-        $reported = 0.0
-        [void][double]::TryParse([string]$reportedValue,[ref]$reported)
-        $remaining = [int][math]::Round([math]::Max(0,[math]::Min(100,$reported)))
+        $remainingValue = Get-NormalizedProperty $Window @('remaining_percent','remainingPercent') $null
+        if ($null -ne $remainingValue) {
+            $reportedRemaining = 0.0
+            [void][double]::TryParse([string]$remainingValue,[ref]$reportedRemaining)
+            $remaining = [int][math]::Round([math]::Max(0,[math]::Min(100,$reportedRemaining)))
+            $used = 100 - $remaining
+        }
+        else {
+            $usedValue = Get-NormalizedProperty $Window @('used_percent','usedPercent') 0
+            $reportedUsed = 0.0
+            [void][double]::TryParse([string]$usedValue,[ref]$reportedUsed)
+            $used = [int][math]::Round([math]::Max(0,[math]::Min(100,$reportedUsed)))
+        }
         Set-NormalizedProperty -Object $Window -Name 'window_minutes' -Value ([int][math]::Floor($seconds / 60))
-        Set-NormalizedProperty -Object $Window -Name 'used_percent' -Value (100 - $remaining)
+        Set-NormalizedProperty -Object $Window -Name 'used_percent' -Value $used
     }
     return $Window
 }
