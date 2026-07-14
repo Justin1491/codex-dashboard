@@ -46,5 +46,5 @@ def test_windows_core_has_plain_text_fallback():
 def test_windows_launcher_updates_colored_renderer_overlays_and_version():
     text = LAUNCHER.read_text()
     assert "`$Script:AppVersion = '2.7.0'" in text
-    assert "New-AutoResumeRow -Status `$Script:ResumeStatus -Project" in text
+    assert "New-AutoResumeRow -Status $Script:ResumeStatus -Project" in text
     assert "Press A to configure auto-resume | Control+C to exit." in text
