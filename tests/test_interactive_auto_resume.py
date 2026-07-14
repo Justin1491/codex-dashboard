@@ -30,7 +30,7 @@ def _read_until(fd: int, needle: bytes, timeout: float = 3.0) -> bytes:
 
 def test_macos_launcher_injects_interactive_auto_resume():
     text = (ROOT / "macOS" / "codex-usage-dashboard.sh").read_text()
-    assert 'VERSION="2.5.4"' in text
+    assert 'VERSION="2.6.0"' in text
     assert '_codex_configure_auto_resume()' in text
     assert '_codex_poll_interactive_key()' in text
     assert '_codex_enable_key_mode()' in text
@@ -53,7 +53,7 @@ def test_macos_overlay_is_loaded_without_command_substitution():
 
 def test_windows_launcher_injects_interactive_auto_resume():
     text = (ROOT / "Windows" / "CodexDashboard.ps1").read_text()
-    assert "`$Script:AppVersion = '2.5.0'" in text
+    assert "`$Script:AppVersion = '2.6.0'" in text
     assert 'function Invoke-AutoResumeConfiguration' in text
     assert 'function Test-InteractiveDashboardKey' in text
     assert 'Press A to configure auto-resume | Control+C to exit.' in text
@@ -126,7 +126,7 @@ declare -f main_loop_fixture
             capture_output=True,
             check=True,
         )
-        assert "version=2.5.4" in result.stdout
+        assert "version=2.6.0" in result.stdout
         assert "_codex_configure_auto_resume" in result.stdout
         assert f"resolved={tmp_path / 'project'}" in result.stdout
         assert "Press A to configure auto-resume" in result.stdout
