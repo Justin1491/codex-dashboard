@@ -53,14 +53,14 @@ def test_macos_overlay_is_loaded_without_command_substitution():
 
 def test_windows_launcher_injects_interactive_auto_resume():
     text = (ROOT / "Windows" / "CodexDashboard.ps1").read_text()
-    assert "`$Script:AppVersion = '2.6.0'" in text
+    assert "`$Script:AppVersion = '2.7.0'" in text
     assert 'function Invoke-AutoResumeConfiguration' in text
     assert 'function Test-InteractiveDashboardKey' in text
     assert 'Press A to configure auto-resume | Control+C to exit.' in text
     assert 'Project directory not found:' in text
     assert '$Script:AutoResumeEnabled = $true' in text
     assert '$Script:ResumeProject = $candidate' in text
-    assert '$autoResumeLine += " | Project: $($Script:ResumeProject)"' in text
+    assert '$autoResumeLine += " | Project: $($Script:ResumeProject)"' not in text
 
 
 def test_existing_command_line_controls_remain_available():
